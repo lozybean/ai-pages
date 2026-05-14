@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>物流运筹学习专题｜AI Pages</title>
+  <style>
+    :root{--bg:#f6f7f9;--paper:#fff;--text:#1f2937;--muted:#667085;--line:#e5e7eb;--accent:#2563eb;--soft:#eff6ff;--shadow:0 14px 38px rgba(15,23,42,.08)}
+    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at top left,#eaf2ff 0,transparent 32rem),var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif;line-height:1.74}
+    .wrap{max-width:980px;margin:0 auto;padding:48px 20px 76px}.back{display:inline-flex;margin-bottom:18px;color:var(--accent);text-decoration:none;font-weight:800}.hero{background:linear-gradient(135deg,#eff6ff,#fff 58%,#f8fafc);border:1px solid var(--line);border-radius:26px;padding:38px 36px;box-shadow:var(--shadow)}
+    .eyebrow{display:inline-flex;padding:5px 12px;border-radius:999px;background:var(--soft);color:var(--accent);font-size:13px;font-weight:800;margin-bottom:14px}h1{margin:0 0 12px;font-size:clamp(32px,5vw,48px);line-height:1.14;letter-spacing:-.04em}.intro{margin:0;color:var(--muted);font-size:17px;max-width:760px}.grid{display:grid;grid-template-columns:1fr;gap:18px;margin-top:26px}.card{background:var(--paper);border:1px solid var(--line);border-radius:22px;padding:26px;box-shadow:0 10px 28px rgba(15,23,42,.05)}.card h2{margin:0 0 10px;font-size:24px;line-height:1.35}.date{display:inline-flex;margin-bottom:12px;padding:4px 10px;border-radius:999px;background:var(--soft);color:var(--accent);font-size:12px;font-weight:800}.desc{color:#344054;margin:10px 0 16px}.tags{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 18px}.tag{display:inline-flex;padding:4px 10px;border-radius:999px;background:#f2f4f7;color:#475467;font-size:12px;font-weight:750}.actions{display:flex;gap:10px;flex-wrap:wrap}.button{display:inline-flex;align-items:center;justify-content:center;padding:10px 15px;border-radius:13px;text-decoration:none;font-weight:850;border:1px solid transparent}.primary{background:var(--accent);color:#fff}.secondary{color:var(--accent);border-color:#bfdbfe;background:#fff}footer{margin-top:28px;color:var(--muted);font-size:14px}@media(max-width:720px){.wrap{padding:30px 14px 56px}.hero,.card{padding:22px;border-radius:18px}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <a class="back" href="../../index.html">← 返回首页</a>
+    <section class="hero">
+      <div class="eyebrow">专题 · 物流运筹学习</div>
+      <h1>物流运筹学习专题</h1>
+      <p class="intro">围绕订单履约、分仓指派、二分图匹配、经典优化算法和业务建模，把零散的学习文章收纳成可持续扩展的专题目录。</p>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <span class="date">发布：2026-05-14</span>
+        <h2>匈牙利算法：从指派问题到行列变换</h2>
+        <p class="desc">从一对一指派问题出发，用具体成本矩阵完整展示行减、列减、覆盖 0、矩阵调整和最终匹配的计算过程。</p>
+        <div class="tags"><span class="tag">匈牙利算法</span><span class="tag">指派问题</span><span class="tag">二分图匹配</span><span class="tag">行列变换</span></div>
+        <div class="actions"><a class="button primary" href="hungarian-algorithm.html">打开文章</a><a class="button secondary" href="https://github.com/lozybean/ai-pages/blob/main/topics/logistics-or/hungarian-algorithm.html">查看源码</a></div>
+      </article>
+
+      <article class="card">
+        <span class="date">发布：2026-05-14</span>
+        <h2>订单分仓 / 指派问题：概念、建模、业务约束与练习场景</h2>
+        <p class="desc">系统梳理订单分仓与指派问题的业务本质、运筹建模方式、库存/时效/产能/拆单等真实约束，并给出一个可逐层实现的练习场景。</p>
+        <div class="tags"><span class="tag">订单履约</span><span class="tag">分仓指派</span><span class="tag">混合整数规划</span><span class="tag">算法工程化</span></div>
+        <div class="actions"><a class="button primary" href="../../pages/order-fulfillment-assignment-practice.html">打开文章</a><a class="button secondary" href="https://github.com/lozybean/ai-pages/blob/main/pages/order-fulfillment-assignment-practice.html">查看源码</a></div>
+      </article>
+    </section>
+
+    <footer>后续可继续收纳车辆路径规划、最小费用流、库存分配、仓网规划、滚动调度与 OR-Tools 实战等内容。</footer>
+  </main>
+</body>
+</html>
