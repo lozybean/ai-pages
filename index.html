@@ -16,41 +16,21 @@
       --tag-bg: #f1eee7;
       --shadow: rgba(37, 49, 64, 0.08);
     }
-
     * { box-sizing: border-box; }
-
-    body {
-      margin: 0;
-      background: radial-gradient(circle at top left, #e8f5ef 0, transparent 34rem), radial-gradient(circle at top right, #fff1df 0, transparent 28rem), var(--bg);
-      color: var(--ink);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
-      line-height: 1.72;
-    }
-
+    body { margin: 0; background: radial-gradient(circle at top left, #e8f5ef 0, transparent 34rem), radial-gradient(circle at top right, #fff1df 0, transparent 28rem), var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", Arial, sans-serif; line-height: 1.72; }
     .wrap { max-width: 1040px; margin: 0 auto; padding: 52px 20px 80px; }
     header { margin-bottom: 38px; }
-    .eyebrow {
-      display: inline-flex; align-items: center; gap: 8px; margin-bottom: 16px; padding: 7px 13px;
-      border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 800;
-    }
-
+    .eyebrow { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 16px; padding: 7px 13px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 800; }
     h1 { margin: 0 0 14px; font-size: clamp(34px, 5vw, 54px); line-height: 1.08; letter-spacing: -0.045em; }
     .intro { max-width: 780px; margin: 0; color: var(--muted); font-size: 17px; }
-    .notice {
-      margin-top: 22px; padding: 18px 20px; background: rgba(255, 253, 248, 0.82);
-      border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 12px 36px var(--shadow); color: #344054;
-    }
+    .notice { margin-top: 22px; padding: 18px 20px; background: rgba(255, 253, 248, 0.82); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 12px 36px var(--shadow); color: #344054; }
     .notice strong { color: var(--accent); }
-
+    .notice a { color: var(--accent); font-weight: 850; }
     .section-title { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 34px 0 16px; }
     .section-title h2 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
     .section-title span { color: var(--muted); font-size: 14px; }
     .grid { display: grid; grid-template-columns: 1fr; gap: 18px; }
-
-    .card {
-      position: relative; overflow: hidden; padding: 26px; background: var(--paper); border: 1px solid var(--line); border-radius: 22px;
-      box-shadow: 0 16px 50px var(--shadow); transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
-    }
+    .card { position: relative; overflow: hidden; padding: 26px; background: var(--paper); border: 1px solid var(--line); border-radius: 22px; box-shadow: 0 16px 50px var(--shadow); transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; }
     .card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 5px; background: linear-gradient(90deg, var(--accent), #8ab6a8); }
     .card:hover { transform: translateY(-2px); border-color: rgba(36, 91, 79, 0.35); box-shadow: 0 22px 70px rgba(37, 49, 64, 0.13); }
     .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; margin-bottom: 10px; }
@@ -65,15 +45,7 @@
     a.secondary { background: transparent; color: var(--accent); border-color: rgba(36, 91, 79, 0.25); }
     footer { margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
     code { padding: 2px 6px; border-radius: 7px; background: #eee8dc; color: #344054; }
-
-    @media (max-width: 720px) {
-      .wrap { padding: 32px 16px 56px; }
-      .card { padding: 22px; }
-      .card-head { display: block; }
-      .date { display: inline-flex; margin-top: 12px; }
-      .section-title { display: block; }
-      .section-title span { display: block; margin-top: 6px; }
-    }
+    @media (max-width: 720px) { .wrap { padding: 32px 16px 56px; } .card { padding: 22px; } .card-head { display: block; } .date { display: inline-flex; margin-top: 12px; } .section-title { display: block; } .section-title span { display: block; margin-top: 6px; } }
   </style>
 </head>
 <body>
@@ -82,12 +54,20 @@
       <div class="eyebrow">AI Pages · Generated Knowledge Archive</div>
       <h1>AI 生成内容索引</h1>
       <p class="intro">这里汇总 ai-pages 仓库中已经托管的静态 HTML 页面。内容主要由 AI 辅助生成、整理与排版，用于沉淀研究笔记、产品分析、投资观察、职业规划和个人知识文章。</p>
+      <div class="notice"><strong>专题：</strong>物流运筹学习内容已收纳到 <a href="topics/logistics-or/">物流运筹学习专题</a>，包括订单分仓 / 指派问题与匈牙利算法。</div>
       <div class="notice"><strong>说明：</strong>本站内容并非传统人工编辑出版物，而是基于对话、资料检索、结构化整理和人工筛选形成的 AI 生成内容。页面可能包含阶段性判断、公开资料摘要和个人视角，请以原始来源、最新数据和实际决策场景为准。</div>
     </header>
 
     <div class="section-title"><h2>最新发布</h2><span>按发布时间倒序排列</span></div>
 
     <section class="grid">
+      <article class="card">
+        <div class="card-head"><h3>匈牙利算法：从指派问题到行列变换</h3><span class="date">发布：2026-05-14</span></div>
+        <p class="desc">用具体成本矩阵解释匈牙利算法的基本原理，展示行减、列减、覆盖 0、矩阵调整和回到原始成本计算最优指派的全过程。</p>
+        <div class="meta"><span class="tag">物流运筹</span><span class="tag">匈牙利算法</span><span class="tag">指派问题</span><span class="tag">二分图匹配</span><span class="tag">行列变换</span></div>
+        <div class="actions"><a class="button primary" href="topics/logistics-or/hungarian-algorithm.html">打开页面</a><a class="button secondary" href="topics/logistics-or/">查看专题</a><a class="button secondary" href="https://github.com/lozybean/ai-pages/blob/main/topics/logistics-or/hungarian-algorithm.html">查看源码</a></div>
+      </article>
+
       <article class="card">
         <div class="card-head"><h3>动机性推理与 AI 使用：如何避免被“高质量迎合”带偏</h3><span class="date">发布：2026-05-14</span></div>
         <p class="desc">系统解释动机性推理的含义、如何避免自我合理化、AI 产品迎合如何放大偏误，以及如何把 AI 用成反迎合的决策校准器。</p>
@@ -99,7 +79,7 @@
         <div class="card-head"><h3>订单分仓 / 指派问题：概念、建模、业务约束与练习场景</h3><span class="date">发布：2026-05-14</span></div>
         <p class="desc">系统梳理订单分仓与指派问题的业务本质、运筹建模方式、库存/时效/产能/拆单等真实约束，并给出一个可逐层实现的练习场景。</p>
         <div class="meta"><span class="tag">物流运筹</span><span class="tag">订单履约</span><span class="tag">分仓指派</span><span class="tag">混合整数规划</span><span class="tag">算法工程化</span></div>
-        <div class="actions"><a class="button primary" href="pages/order-fulfillment-assignment-practice.html">打开页面</a><a class="button secondary" href="https://github.com/lozybean/ai-pages/blob/main/pages/order-fulfillment-assignment-practice.html">查看源码</a></div>
+        <div class="actions"><a class="button primary" href="pages/order-fulfillment-assignment-practice.html">打开页面</a><a class="button secondary" href="topics/logistics-or/">查看专题</a><a class="button secondary" href="https://github.com/lozybean/ai-pages/blob/main/pages/order-fulfillment-assignment-practice.html">查看源码</a></div>
       </article>
 
       <article class="card">
@@ -124,7 +104,7 @@
       </article>
     </section>
 
-    <footer><p>维护说明：新增页面后，请同步更新 <code>index.html</code>。后续页面增多时，可按「AI 教育 / 投资报告 / 职业规划 / 产品方案 / 读书笔记」等主题分组。</p></footer>
+    <footer><p>维护说明：新增页面后，请同步更新 <code>index.html</code>。专题页可按「物流运筹 / AI 教育 / 投资报告 / 职业规划 / 产品方案 / 读书笔记」等主题持续归档。</p></footer>
   </main>
 </body>
 </html>
