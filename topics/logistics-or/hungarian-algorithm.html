@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>匈牙利算法：从指派问题到行列变换</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --accent: #2563eb;
+      --accent-soft: #eff6ff;
+      --warn: #92400e;
+      --warn-bg: #fffbeb;
+      --code-bg: #111827;
+      --code-text: #e5e7eb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at top left, rgba(37, 99, 235, .12), transparent 34rem),
+        linear-gradient(180deg, #f8fafc, var(--bg));
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.78;
+    }
+
+    .page {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 42px 20px 80px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, #eff6ff, #fff 58%, #f8fafc);
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      padding: 44px 42px;
+      box-shadow: 0 20px 54px rgba(15, 23, 42, .08);
+      margin-bottom: 26px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--accent);
+      background: var(--accent-soft);
+      border: 1px solid #dbeafe;
+      border-radius: 999px;
+      padding: 5px 13px;
+      font-size: 13px;
+      font-weight: 800;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      font-size: clamp(30px, 5vw, 46px);
+      line-height: 1.16;
+      letter-spacing: -.04em;
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 860px;
+      color: #374151;
+      font-size: 18px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid var(--line);
+      padding: 5px 12px;
+      color: #4b5563;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .toc {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    .toc a {
+      display: block;
+      text-decoration: none;
+      color: #1d4ed8;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      padding: 10px 12px;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .toc a:hover { background: #eff6ff; border-color: #93c5fd; }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 30px 34px;
+      box-shadow: 0 10px 28px rgba(15, 23, 42, .05);
+      margin: 22px 0;
+    }
+
+    h2 {
+      margin: 0 0 18px;
+      font-size: 26px;
+      line-height: 1.35;
+      letter-spacing: -.025em;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h3 {
+      margin: 28px 0 10px;
+      font-size: 20px;
+      line-height: 1.4;
+    }
+
+    p { margin: 10px 0; }
+
+    strong { color: #111827; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0 24px;
+      font-size: 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f9fafb;
+      font-weight: 800;
+      color: #374151;
+    }
+
+    tr:nth-child(even) td { background: #fcfcfd; }
+
+    .matrix td, .matrix th { text-align: center; }
+
+    .note {
+      margin: 18px 0;
+      padding: 15px 18px;
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      border-radius: 14px;
+      color: #1e3a8a;
+    }
+
+    .warn {
+      margin: 18px 0;
+      padding: 15px 18px;
+      border-left: 4px solid #f59e0b;
+      background: var(--warn-bg);
+      border-radius: 14px;
+      color: var(--warn);
+    }
+
+    .zero { font-weight: 900; color: #dc2626; }
+    .strike { text-decoration: line-through; color: #6b7280; }
+    .formula {
+      background: #f9fafb;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin: 14px 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      overflow-x: auto;
+      white-space: nowrap;
+      color: #111827;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background: #f3f4f6;
+      color: #111827;
+      border-radius: 6px;
+      padding: 2px 5px;
+      font-size: .92em;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .mini {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+      background: #fcfcfd;
+    }
+
+    .mini h3 { margin-top: 0; font-size: 18px; }
+
+    @media (max-width: 760px) {
+      .page { padding: 22px 12px 52px; }
+      .hero { padding: 28px 22px; border-radius: 20px; }
+      .card { padding: 22px 18px; border-radius: 18px; }
+      .toc, .summary-grid { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; white-space: nowrap; }
+    }
+
+    @media print {
+      body { background: #fff; }
+      .page { max-width: none; padding: 0; }
+      .hero, .card { box-shadow: none; break-inside: avoid; }
+      h2, h3 { break-after: avoid; }
+      table, .note, .warn, .formula { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">运筹算法 · 指派问题 · 二分图匹配</div>
+      <h1>匈牙利算法：从指派问题到行列变换</h1>
+      <p class="subtitle">匈牙利算法是一种用于解决“一对一最优分配问题”的经典算法。它不贪心地选择局部最便宜的匹配，而是在整体上找到总成本最低或总收益最高的指派方案。</p>
+      <div class="meta">
+        <span class="tag">匈牙利算法</span>
+        <span class="tag">指派问题</span>
+        <span class="tag">二分图匹配</span>
+        <span class="tag">行列变换</span>
+        <span class="tag">物流运筹入门</span>
+      </div>
+      <nav class="toc">
+        <a href="#concept">一、它解决什么问题</a>
+        <a href="#why-not-greedy">二、为什么不能只用贪心</a>
+        <a href="#principle">三、算法核心原理</a>
+        <a href="#example">四、完整计算例子</a>
+        <a href="#why-valid">五、为什么行列变换有效</a>
+        <a href="#business">六、在业务中的适用边界</a>
+      </nav>
+    </section>
+
+    <section class="card" id="concept">
+      <h2>一、匈牙利算法解决什么问题？</h2>
+      <p>匈牙利算法解决的是二分图中的最优匹配问题。更直白地说，它适合处理这样的问题：</p>
+      <div class="note"><strong>有一批“人”和一批“任务”，每个人做每个任务都有一个成本或收益，如何做到“一人一个任务、一个任务一个人”，让总成本最低或总收益最高？</strong></div>
+      <p>在物流和履约场景中，可以把左边的一组点理解成骑手、仓库、车辆、机器或工人；右边的一组点理解成订单、门店、任务、作业或职位。边上的数字可以是距离、耗时、费用、惩罚，也可以是收益、匹配得分或利润。</p>
+      <table>
+        <thead><tr><th>左侧对象</th><th>右侧对象</th><th>边上的数值</th><th>目标</th></tr></thead>
+        <tbody>
+          <tr><td>骑手</td><td>订单</td><td>配送距离 / 超时风险</td><td>总配送成本最低</td></tr>
+          <tr><td>仓库</td><td>订单</td><td>履约成本 / 时效惩罚</td><td>总履约成本最低</td></tr>
+          <tr><td>工人</td><td>任务</td><td>完成成本 / 耗时</td><td>总作业成本最低</td></tr>
+          <tr><td>广告位</td><td>广告</td><td>预估收益</td><td>总收益最高</td></tr>
+        </tbody>
+      </table>
+      <p>如果是成本问题，直接求最小总成本；如果是收益问题，通常可以通过转换，把最大收益问题变成最小成本问题。</p>
+    </section>
+
+    <section class="card" id="why-not-greedy">
+      <h2>二、为什么不能只用贪心？</h2>
+      <p>很多人第一反应会用贪心：每次选当前成本最低的一对。但指派问题的关键在于“互斥”：一个任务被某个人占用了，别人就不能再选它。局部最便宜的选择，可能堵死后面的好方案。</p>
+      <table class="matrix">
+        <thead><tr><th></th><th>任务 A</th><th>任务 B</th></tr></thead>
+        <tbody>
+          <tr><th>人 1</th><td>1</td><td>2</td></tr>
+          <tr><th>人 2</th><td>1</td><td>100</td></tr>
+        </tbody>
+      </table>
+      <p>如果贪心先选“人 1 → 任务 A”，成本是 1，看起来很好；但剩下只能“人 2 → 任务 B”，成本 100，总成本是 101。</p>
+      <p>真正的最优解是：</p>
+      <table>
+        <thead><tr><th>分配</th><th>成本</th></tr></thead>
+        <tbody>
+          <tr><td>人 1 → 任务 B</td><td>2</td></tr>
+          <tr><td>人 2 → 任务 A</td><td>1</td></tr>
+          <tr><td><strong>总成本</strong></td><td><strong>3</strong></td></tr>
+        </tbody>
+      </table>
+      <div class="warn">指派问题不能只看单条边是否便宜，而要看一组匹配组合是否整体最优。匈牙利算法的价值就在这里。</div>
+    </section>
+
+    <section class="card" id="principle">
+      <h2>三、匈牙利算法的核心原理</h2>
+      <p>匈牙利算法的经典矩阵版本，可以先从三个动作理解：</p>
+      <div class="summary-grid">
+        <div class="mini">
+          <h3>1. 行列变换</h3>
+          <p>每一行减去本行最小值，每一列减去本列最小值。这样会制造出很多 0，同时不改变最优解的结构。</p>
+        </div>
+        <div class="mini">
+          <h3>2. 用 0 尝试匹配</h3>
+          <p>0 表示在当前调整后的成本体系下很有潜力的匹配。算法尝试从 0 中选出互不冲突的一组完整匹配。</p>
+        </div>
+        <div class="mini">
+          <h3>3. 覆盖与调整</h3>
+          <p>如果 0 不足以形成完整匹配，就用最少的线覆盖所有 0，再对矩阵做调整，制造新的 0。</p>
+        </div>
+        <div class="mini">
+          <h3>4. 得到最优解</h3>
+          <p>当可以从 0 中选出每行一个、每列一个的不冲突匹配时，就找到了原问题的最优分配。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="example">
+      <h2>四、完整计算例子：3 人分 3 个任务</h2>
+      <p>有 3 个工人 A、B、C，要分配给 3 个任务 1、2、3。每个人做每个任务的成本如下：</p>
+      <table class="matrix">
+        <thead><tr><th></th><th>任务 1</th><th>任务 2</th><th>任务 3</th></tr></thead>
+        <tbody>
+          <tr><th>工人 A</th><td>4</td><td>1</td><td>3</td></tr>
+          <tr><th>工人 B</th><td>2</td><td>0</td><td>5</td></tr>
+          <tr><th>工人 C</th><td>3</td><td>2</td><td>2</td></tr>
+        </tbody>
+      </table>
+      <p>目标是：每个工人分一个任务，每个任务只能被一个工人做，使总成本最低。</p>
+
+      <h3>第一步：每一行减去本行最小值</h3>
+      <p>每一行的最小值分别是：</p>
+      <table>
+        <thead><tr><th>行</th><th>最小值</th></tr></thead>
+        <tbody>
+          <tr><td>A</td><td>1</td></tr>
+          <tr><td>B</td><td>0</td></tr>
+          <tr><td>C</td><td>2</td></tr>
+        </tbody>
+      </table>
+      <p>逐行相减：</p>
+      <div class="formula">A 行：4, 1, 3 减 1 → 3, 0, 2</div>
+      <div class="formula">B 行：2, 0, 5 减 0 → 2, 0, 5</div>
+      <div class="formula">C 行：3, 2, 2 减 2 → 1, 0, 0</div>
+      <table class="matrix">
+        <thead><tr><th></th><th>任务 1</th><th>任务 2</th><th>任务 3</th></tr></thead>
+        <tbody>
+          <tr><th>A</th><td>3</td><td class="zero">0</td><td>2</td></tr>
+          <tr><th>B</th><td>2</td><td class="zero">0</td><td>5</td></tr>
+          <tr><th>C</th><td>1</td><td class="zero">0</td><td class="zero">0</td></tr>
+        </tbody>
+      </table>
+      <p>这一步的含义是：每个工人无论最终做哪个任务，都会先扣掉自己这一行的最低成本。因为每个方案都必须给每个工人分一个任务，所以这种统一扣减不会改变最优方案。</p>
+
+      <h3>第二步：每一列减去本列最小值</h3>
+      <p>当前矩阵中，各列最小值为：</p>
+      <table>
+        <thead><tr><th>列</th><th>最小值</th></tr></thead>
+        <tbody>
+          <tr><td>任务 1</td><td>1</td></tr>
+          <tr><td>任务 2</td><td>0</td></tr>
+          <tr><td>任务 3</td><td>0</td></tr>
+        </tbody>
+      </table>
+      <p>任务 1 列减去 1，任务 2 和任务 3 列不变：</p>
+      <table class="matrix">
+        <thead><tr><th></th><th>任务 1</th><th>任务 2</th><th>任务 3</th></tr></thead>
+        <tbody>
+          <tr><th>A</th><td>2</td><td class="zero">0</td><td>2</td></tr>
+          <tr><th>B</th><td>1</td><td class="zero">0</td><td>5</td></tr>
+          <tr><th>C</th><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td></tr>
+        </tbody>
+      </table>
+
+      <h3>第三步：尝试用 0 完成一组不冲突匹配</h3>
+      <p>现在 0 的位置是：A 只能选任务 2；B 只能选任务 2；C 可以选任务 1、2、3。</p>
+      <table>
+        <thead><tr><th>工人</th><th>可选的 0 成本任务</th></tr></thead>
+        <tbody>
+          <tr><td>A</td><td>任务 2</td></tr>
+          <tr><td>B</td><td>任务 2</td></tr>
+          <tr><td>C</td><td>任务 1、任务 2、任务 3</td></tr>
+        </tbody>
+      </table>
+      <p>A 和 B 都挤在任务 2 上，所以不能直接选出 3 个互不冲突的 0。算法需要继续调整矩阵。</p>
+
+      <h3>第四步：用最少的线覆盖所有 0</h3>
+      <p>当前所有 0 可以用两条线覆盖：一条线覆盖任务 2 列，一条线覆盖 C 行。</p>
+      <table class="matrix">
+        <thead><tr><th></th><th>任务 1</th><th>任务 2</th><th>任务 3</th></tr></thead>
+        <tbody>
+          <tr><th>A</th><td>2</td><td class="strike">0</td><td>2</td></tr>
+          <tr><th>B</th><td>1</td><td class="strike">0</td><td>5</td></tr>
+          <tr><th>C</th><td class="strike">0</td><td class="strike">0</td><td class="strike">0</td></tr>
+        </tbody>
+      </table>
+      <p>只用了 2 条线，小于矩阵规模 3，说明还没有形成完整匹配，需要继续调整。</p>
+
+      <h3>第五步：找没有被线覆盖的最小值，并调整矩阵</h3>
+      <p>没有被线覆盖的位置是 A1、A3、B1、B3，它们的值是 2、2、1、5，最小值是 1。</p>
+      <p>调整规则如下：</p>
+      <ol>
+        <li>没有被任何线覆盖的元素，减去 1；</li>
+        <li>被两条线交叉覆盖的元素，加上 1；</li>
+        <li>只被一条线覆盖的元素，不变。</li>
+      </ol>
+      <table>
+        <thead><tr><th>位置类型</th><th>位置</th><th>变化</th></tr></thead>
+        <tbody>
+          <tr><td>未覆盖</td><td>A1、A3、B1、B3</td><td>减 1</td></tr>
+          <tr><td>交叉覆盖</td><td>C2</td><td>加 1</td></tr>
+          <tr><td>单线覆盖</td><td>A2、B2、C1、C3</td><td>不变</td></tr>
+        </tbody>
+      </table>
+      <p>调整后得到：</p>
+      <table class="matrix">
+        <thead><tr><th></th><th>任务 1</th><th>任务 2</th><th>任务 3</th></tr></thead>
+        <tbody>
+          <tr><th>A</th><td>1</td><td class="zero">0</td><td>1</td></tr>
+          <tr><th>B</th><td class="zero">0</td><td class="zero">0</td><td>4</td></tr>
+          <tr><th>C</th><td class="zero">0</td><td>1</td><td class="zero">0</td></tr>
+        </tbody>
+      </table>
+
+      <h3>第六步：再次尝试用 0 做不冲突匹配</h3>
+      <p>这一次可以选出完整匹配：</p>
+      <table>
+        <thead><tr><th>工人</th><th>任务</th></tr></thead>
+        <tbody>
+          <tr><td>A</td><td>任务 2</td></tr>
+          <tr><td>B</td><td>任务 1</td></tr>
+          <tr><td>C</td><td>任务 3</td></tr>
+        </tbody>
+      </table>
+      <p>它们互不冲突：每个工人一个任务，每个任务只被一个工人占用。</p>
+
+      <h3>第七步：回到原始成本矩阵计算总成本</h3>
+      <p>注意，最终成本要回到原始矩阵计算：</p>
+      <table class="matrix">
+        <thead><tr><th></th><th>任务 1</th><th>任务 2</th><th>任务 3</th></tr></thead>
+        <tbody>
+          <tr><th>工人 A</th><td>4</td><td>1</td><td>3</td></tr>
+          <tr><th>工人 B</th><td>2</td><td>0</td><td>5</td></tr>
+          <tr><th>工人 C</th><td>3</td><td>2</td><td>2</td></tr>
+        </tbody>
+      </table>
+      <table>
+        <thead><tr><th>分配</th><th>原始成本</th></tr></thead>
+        <tbody>
+          <tr><td>A → 任务 2</td><td>1</td></tr>
+          <tr><td>B → 任务 1</td><td>2</td></tr>
+          <tr><td>C → 任务 3</td><td>2</td></tr>
+          <tr><td><strong>总成本</strong></td><td><strong>1 + 2 + 2 = 5</strong></td></tr>
+        </tbody>
+      </table>
+      <div class="note"><strong>最优分配：</strong>A → 任务 2，B → 任务 1，C → 任务 3；最小总成本为 5。</div>
+    </section>
+
+    <section class="card" id="why-valid">
+      <h2>五、为什么行列变化不改变最优解？</h2>
+      <p>这是理解匈牙利算法最关键的一点。</p>
+      <p>每一行减去一个固定值，本质上是：对某个工人来说，无论他最终被分到哪个任务，这个方案都会少算同样一笔钱。因为完整指派中每一行必须选一次，所以所有可行方案都会一起少算这些行最小值之和。</p>
+      <p>每一列减去一个固定值也一样。因为完整指派中每一列也必须被选一次，所以所有可行方案都会一起少算这些列最小值之和。</p>
+      <div class="formula">新方案成本 = 原方案成本 − 所有行扣减之和 − 所有列扣减之和</div>
+      <p>这个被减掉的总量对所有完整匹配方案都一样，所以不同方案之间的相对优劣不会改变。行列变换只是把成本矩阵平移到一个更容易观察 0 匹配的形式。</p>
+    </section>
+
+    <section class="card" id="business">
+      <h2>六、在业务中的适用边界</h2>
+      <p>匈牙利算法适合处理标准的一对一最优匹配问题。它可以作为理解物流指派、订单匹配和运筹建模的基础工具，但不能直接覆盖所有真实业务复杂性。</p>
+      <table>
+        <thead><tr><th>适合</th><th>不适合直接处理</th></tr></thead>
+        <tbody>
+          <tr><td>骑手与订单一对一匹配</td><td>一个骑手可接多个订单</td></tr>
+          <tr><td>工人与任务一对一分配</td><td>任务有复杂前后顺序依赖</td></tr>
+          <tr><td>机器与作业一对一匹配</td><td>机器有容量、班次、维护窗口</td></tr>
+          <tr><td>小批量仓库与订单的一轮简化指派</td><td>订单有库存、时窗、拆单、路径和动态流入</td></tr>
+        </tbody>
+      </table>
+      <p>真实物流系统里，如果涉及一对多、多容量、库存、多商品、车辆路径、动态订单流，通常需要进一步使用最小费用最大流、线性规划 / 整数规划、启发式算法、局部搜索、滚动优化或 OR-Tools 等方法。</p>
+      <div class="note">在运筹学习中，匈牙利算法的意义不只是“会算一个矩阵”，而是帮助建立一个重要直觉：很多业务分配问题不能只靠局部贪心，而要把整体组合约束放进模型里。</div>
+    </section>
+  </main>
+</body>
+</html>
