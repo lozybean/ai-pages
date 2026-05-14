@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>物流运筹算法核心知识地图｜AI Pages</title>
+  <style>
+    :root{--bg:#f6f7fb;--paper:#fff;--text:#1f2937;--muted:#667085;--line:#e5e7eb;--accent:#2563eb;--accent2:#0f766e;--soft:#eff6ff;--green:#ecfdf5;--orange:#fff7ed;--purple:#f5f3ff;--shadow:0 18px 48px rgba(15,23,42,.08)}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at top left,#eaf2ff 0,transparent 34rem),radial-gradient(circle at top right,#ecfdf5 0,transparent 26rem),var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",Arial,sans-serif;line-height:1.74}.wrap{max-width:1080px;margin:0 auto;padding:44px 20px 78px}.back{display:inline-flex;margin-bottom:18px;color:var(--accent);text-decoration:none;font-weight:850}.hero{background:linear-gradient(135deg,#eff6ff,#fff 56%,#f8fafc);border:1px solid var(--line);border-radius:28px;padding:40px 38px;box-shadow:var(--shadow)}.eyebrow{display:inline-flex;padding:6px 13px;border-radius:999px;background:var(--soft);color:var(--accent);font-size:13px;font-weight:850;margin-bottom:14px}h1{margin:0 0 14px;font-size:clamp(34px,5vw,52px);line-height:1.1;letter-spacing:-.045em}.intro{max-width:820px;margin:0;color:var(--muted);font-size:17px}.toc{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}.toc a{display:inline-flex;padding:7px 12px;border-radius:999px;background:#fff;border:1px solid #bfdbfe;color:var(--accent);text-decoration:none;font-size:13px;font-weight:800}.section{margin-top:30px}.section h2{margin:0 0 14px;font-size:28px;letter-spacing:-.03em}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.card{background:var(--paper);border:1px solid var(--line);border-radius:22px;padding:24px;box-shadow:0 12px 32px rgba(15,23,42,.05)}.card h3{margin:0 0 10px;font-size:21px;line-height:1.35}.card p{margin:8px 0 0;color:#344054}.muted{color:var(--muted)}.tagrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.tag{display:inline-flex;padding:4px 10px;border-radius:999px;background:#f2f4f7;color:#475467;font-size:12px;font-weight:760}.full{grid-column:1/-1}.map{width:100%;border-collapse:separate;border-spacing:0;background:#fff;border:1px solid var(--line);border-radius:22px;overflow:hidden;box-shadow:0 12px 32px rgba(15,23,42,.05)}.map th,.map td{padding:15px 16px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}.map th{background:#f8fafc;color:#344054;font-size:14px}.map tr:last-child td{border-bottom:0}.map td:first-child{font-weight:850;color:#111827;white-space:nowrap}.pill{display:inline-flex;margin:2px 4px 2px 0;padding:3px 8px;border-radius:999px;background:var(--soft);color:var(--accent);font-size:12px;font-weight:760}.callout{padding:22px 24px;border-radius:22px;border:1px solid #bfdbfe;background:#eff6ff;color:#1e3a8a}.callout strong{color:#1d4ed8}.formula{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;background:#0f172a;color:#e5e7eb;border-radius:16px;padding:18px 20px;overflow:auto;font-size:14px;line-height:1.7}.priority{counter-reset:item}.priority li{margin:10px 0;padding-left:4px}.note{border-left:5px solid var(--accent2);background:#f0fdfa;border-radius:16px;padding:18px 20px;color:#134e4a}.footer{margin-top:34px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}@media(max-width:760px){.wrap{padding:30px 14px 58px}.hero,.card{padding:22px;border-radius:20px}.grid{grid-template-columns:1fr}.map{display:block;overflow-x:auto}.map td:first-child{white-space:normal}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <a class="back" href="./">← 返回物流运筹专题</a>
+    <section class="hero">
+      <div class="eyebrow">物流运筹 · 核心知识地图</div>
+      <h1>物流运筹算法核心知识地图</h1>
+      <p class="intro">这是一份面向零基础学习者和工程化参与者的知识地图。它不按传统教材目录展开，而是从物流业务决策出发，说明每类运筹知识解决什么问题、适合什么场景、学习时应该抓住哪些关键概念。</p>
+      <nav class="toc" aria-label="目录">
+        <a href="#modeling">建模语言</a><a href="#scene-map">场景对应</a><a href="#knowledge">知识模块</a><a href="#priority">学习优先级</a><a href="#engineering">工程化关注点</a>
+      </nav>
+    </section>
+
+    <section id="modeling" class="section">
+      <h2>一、先掌握运筹问题的通用语言</h2>
+      <div class="grid">
+        <article class="card"><h3>1. 决策变量</h3><p>变量回答“系统到底要决定什么”。例如订单是否由某个仓发货、某辆车是否访问某个配送点、某条线路运多少货、某个商品补多少库存。</p></article>
+        <article class="card"><h3>2. 目标函数</h3><p>目标回答“什么叫更好”。物流里常见目标包括履约成本最低、准时率最高、拆单率最低、仓库负载均衡、车辆利用率更高、异常风险更低。</p></article>
+        <article class="card"><h3>3. 约束条件</h3><p>约束回答“哪些规则不能违反或尽量不要违反”。硬约束包括库存、产能、车容量、时间窗、禁运规则；软约束包括少拆单、少绕路、负载均衡和体验稳定。</p></article>
+        <article class="card"><h3>4. 求解与评估</h3><p>运筹不是写完模型就结束。还要考虑求解时间、无解率、fallback、可解释性、策略回放、在线灰度和业务可执行性。</p></article>
+        <div class="card full">
+          <h3>通用建模模板</h3>
+          <pre class="formula">业务问题：要优化哪一类物流决策？
+决策变量：系统需要选择、分配、排序、调度或运输什么？
+目标函数：成本、时效、稳定性、体验、资源利用率如何权衡？
+硬约束：库存、容量、时间窗、线路、品类、法规等不可违反规则。
+软约束：偏好、体验、均衡、少拆单、少变更等可转为惩罚项的规则。
+输入数据：订单、库存、仓库产能、线路成本、车辆、司机、地图、历史需求。
+输出结果：分仓方案、路线方案、调拨方案、补货方案、排班方案或异常处置方案。
+评估指标：成本、准时率、超时率、拆单率、负载、无解率、求解耗时、fallback 触发率。</pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="scene-map" class="section">
+      <h2>二、物流场景与运筹知识对应表</h2>
+      <table class="map">
+        <thead><tr><th>物流场景</th><th>核心问题</th><th>对应知识</th><th>典型输出</th></tr></thead>
+        <tbody>
+          <tr><td>订单分仓</td><td>订单从哪个仓发、是否拆单、如何满足库存和时效</td><td><span class="pill">指派问题</span><span class="pill">整数规划</span><span class="pill">组合优化</span><span class="pill">多目标优化</span></td><td>订单-仓库分配方案</td></tr>
+          <tr><td>司机派单</td><td>订单分给哪个司机、如何兼顾距离、时效和工作量</td><td><span class="pill">二分图匹配</span><span class="pill">最小费用流</span><span class="pill">在线优化</span></td><td>订单-司机匹配方案</td></tr>
+          <tr><td>末端配送路径</td><td>多辆车如何访问多个配送点，并满足容量和时间窗</td><td><span class="pill">TSP</span><span class="pill">VRP</span><span class="pill">CVRP</span><span class="pill">VRPTW</span><span class="pill">启发式算法</span></td><td>车辆路线和访问顺序</td></tr>
+          <tr><td>干线运输 / 调拨</td><td>货物在仓、分拨中心、城市之间如何流动</td><td><span class="pill">图论</span><span class="pill">网络流</span><span class="pill">最小费用流</span><span class="pill">多商品流</span><span class="pill">网络设计</span></td><td>线路流量和运输计划</td></tr>
+          <tr><td>库存与补货</td><td>货放在哪、放多少、什么时候补、补多少</td><td><span class="pill">库存控制</span><span class="pill">随机优化</span><span class="pill">动态规划</span><span class="pill">鲁棒优化</span></td><td>安全库存、补货点、补货量</td></tr>
+          <tr><td>仓网规划</td><td>仓库建在哪里、覆盖哪些区域、服务水平如何设计</td><td><span class="pill">设施选址</span><span class="pill">覆盖问题</span><span class="pill">容量选址</span><span class="pill">多目标优化</span></td><td>仓网布局和区域覆盖</td></tr>
+          <tr><td>仓内作业</td><td>拣货、分拣、波次、库位、包装台如何组织</td><td><span class="pill">调度问题</span><span class="pill">排队论</span><span class="pill">布局优化</span><span class="pill">离散事件仿真</span></td><td>波次计划、拣货路径、作业排班</td></tr>
+          <tr><td>异常恢复</td><td>爆仓、缺货、延误、司机爽约后如何重算方案</td><td><span class="pill">滚动优化</span><span class="pill">重调度</span><span class="pill">鲁棒优化</span><span class="pill">仿真评估</span></td><td>重派、切流、降级和恢复方案</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="knowledge" class="section">
+      <h2>三、核心知识模块</h2>
+      <div class="grid">
+        <article class="card"><h3>1. 线性规划 LP</h3><p>适合连续资源分配问题，例如运量、产能、预算的分配。核心是目标和约束都是线性的。</p><div class="tagrow"><span class="tag">资源分配</span><span class="tag">成本最小</span></div></article>
+        <article class="card"><h3>2. 整数规划 / 混合整数规划 IP / MIP</h3><p>适合“选不选、派不派、走不走、建不建”的离散决策，是订单分仓、选址、排班、线路选择的核心表达工具。</p><div class="tagrow"><span class="tag">0-1 变量</span><span class="tag">复杂约束</span></div></article>
+        <article class="card"><h3>3. 图论与最短路径</h3><p>物流网络天然是图：仓库、城市、站点是节点，运输线路是边。最短路径用于路径选择、中转路径和网络分析。</p><div class="tagrow"><span class="tag">Dijkstra</span><span class="tag">A*</span><span class="tag">路径成本</span></div></article>
+        <article class="card"><h3>4. 匹配与指派</h3><p>解决订单-仓、订单-司机、任务-人员的一对一或多对多分配问题。匈牙利算法适合标准指派，容量约束常转向最小费用流或整数规划。</p><div class="tagrow"><span class="tag">二分图匹配</span><span class="tag">匈牙利算法</span><span class="tag">成本矩阵</span></div></article>
+        <article class="card"><h3>5. 网络流与最小费用流</h3><p>适合描述货物流、车辆流、库存流。关键元素是节点供需、边容量、单位成本和流量守恒。</p><div class="tagrow"><span class="tag">最大流</span><span class="tag">最小费用流</span><span class="tag">多商品流</span></div></article>
+        <article class="card"><h3>6. TSP / VRP 路径优化</h3><p>TSP 是单车访问多点，VRP 是多车服务多点。真实配送通常还会叠加容量、时间窗、取送货、司机工时和动态插单。</p><div class="tagrow"><span class="tag">TSP</span><span class="tag">VRP</span><span class="tag">CVRP</span><span class="tag">VRPTW</span></div></article>
+        <article class="card"><h3>7. 调度 Scheduling</h3><p>解决任务、设备、人力、车辆在时间轴上的安排问题。仓内波次、人员排班、干线班车、包装台作业都属于调度范畴。</p><div class="tagrow"><span class="tag">排班</span><span class="tag">资源日历</span><span class="tag">作业顺序</span></div></article>
+        <article class="card"><h3>8. 库存控制</h3><p>处理需求不确定下的补货和备货问题。关键概念包括安全库存、补货点、提前期、缺货成本、持有成本和服务水平。</p><div class="tagrow"><span class="tag">安全库存</span><span class="tag">补货点</span><span class="tag">服务水平</span></div></article>
+        <article class="card"><h3>9. 设施选址与覆盖问题</h3><p>回答仓库、前置仓、分拨中心和站点应建在哪里，服务哪些区域。常见模型包括 Facility Location、Set Covering、Max Coverage。</p><div class="tagrow"><span class="tag">仓网规划</span><span class="tag">区域覆盖</span><span class="tag">容量选址</span></div></article>
+        <article class="card"><h3>10. 启发式与元启发式</h3><p>大规模物流问题常无法在可接受时间内求精确最优。贪心、局部搜索、2-opt、模拟退火、禁忌搜索、遗传算法、大邻域搜索用于快速取得足够好解。</p><div class="tagrow"><span class="tag">局部搜索</span><span class="tag">LNS</span><span class="tag">近似最优</span></div></article>
+        <article class="card"><h3>11. 约束规划 CP / CP-SAT</h3><p>适合表达组合约束、时间窗、排班、作业顺序等复杂规则。OR-Tools 的 CP-SAT 在调度和离散优化中非常常用。</p><div class="tagrow"><span class="tag">约束满足</span><span class="tag">CP-SAT</span><span class="tag">排班调度</span></div></article>
+        <article class="card"><h3>12. 随机优化与鲁棒优化</h3><p>物流中需求、时效、产能、司机在线状态都会波动。随机优化关注概率分布，鲁棒优化关注在不利场景下仍然可接受。</p><div class="tagrow"><span class="tag">不确定性</span><span class="tag">场景分析</span><span class="tag">风险缓冲</span></div></article>
+        <article class="card"><h3>13. 排队论</h3><p>用于分析仓库、分拣线、包装台、站点和客服等服务系统的等待、拥堵和瓶颈。它不直接给出路线，但能解释产能和排队风险。</p><div class="tagrow"><span class="tag">等待时间</span><span class="tag">瓶颈分析</span><span class="tag">服务率</span></div></article>
+        <article class="card"><h3>14. 离散事件仿真</h3><p>用于在上线前回放历史订单、模拟仓内流程、验证策略在高峰、异常、爆仓场景下的表现。</p><div class="tagrow"><span class="tag">回放评估</span><span class="tag">What-if</span><span class="tag">极端场景</span></div></article>
+        <article class="card"><h3>15. 在线优化与滚动优化</h3><p>物流决策不是一次性静态问题。订单、库存、车辆、天气和异常不断变化，所以需要周期性重算、局部修正和实时 fallback。</p><div class="tagrow"><span class="tag">实时决策</span><span class="tag">滚动重算</span><span class="tag">动态插单</span></div></article>
+        <article class="card"><h3>16. 多目标优化</h3><p>物流目标经常冲突：成本、时效、体验、稳定性、公平性、资源利用率不可能同时最优。常见做法是加权、分层目标或约束优先级。</p><div class="tagrow"><span class="tag">成本-时效权衡</span><span class="tag">惩罚项</span><span class="tag">Pareto</span></div></article>
+      </div>
+    </section>
+
+    <section id="priority" class="section">
+      <h2>四、零基础学习优先级</h2>
+      <div class="card full">
+        <ol class="priority">
+          <li><strong>先学建模语言：</strong>变量、目标、约束、输入、输出、评估指标。</li>
+          <li><strong>再学指派问题：</strong>从订单分仓、司机派单入手，理解成本矩阵和容量约束。</li>
+          <li><strong>学习整数规划和求解器：</strong>用 OR-Tools / PuLP 跑通一个小型分仓模型。</li>
+          <li><strong>学习图论和网络流：</strong>理解干线运输、调拨、仓到城市供给分配。</li>
+          <li><strong>学习 VRP：</strong>理解多车、多点、容量、时间窗为什么会快速变复杂。</li>
+          <li><strong>补库存、调度、排队论：</strong>把运输优化扩展到供应链和仓内作业。</li>
+          <li><strong>最后学习仿真与评估：</strong>验证策略收益、风险、无解率、稳定性和可执行性。</li>
+        </ol>
+      </div>
+      <div class="note"><strong>学习判断标准：</strong>不要只问“我会不会推公式”，而要问“我能不能把一个物流业务问题拆成变量、目标和约束，并说明适合用哪类模型解决”。这比一开始追求理论证明更有效。</div>
+    </section>
+
+    <section id="engineering" class="section">
+      <h2>五、工程化落地时必须关注的知识</h2>
+      <div class="grid">
+        <article class="card"><h3>1. 硬约束与软约束分离</h3><p>库存不足、容量超限、禁运规则通常是硬约束；少拆单、少绕路、负载均衡通常是软约束。混在一起会导致模型不可解释或经常无解。</p></article>
+        <article class="card"><h3>2. 求解失败是常态</h3><p>无可行解、求解超时、输入异常、状态变化、约束过强都很常见。线上系统必须支持超时返回当前最好解、规则降级、局部重算和人工介入。</p></article>
+        <article class="card"><h3>3. 数据质量决定算法上限</h3><p>经纬度、库存、产能、车辆状态、线路成本、时效预测一旦不准，优化器只会稳定地产生错误决策。数据校验和异常监控是算法系统的一部分。</p></article>
+        <article class="card"><h3>4. 评估比单次最优更重要</h3><p>物流算法要通过历史回放、A/B、仿真、极端场景压测来证明收益。只看一次求解结果，很容易忽视稳定性和现场执行风险。</p></article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="callout"><strong>核心结论：</strong>物流运筹算法的学习主线不是“从数学教材一路啃到高级优化”，而是“物流场景 → 变量目标约束 → 典型模型 → 求解器 demo → 策略评估 → 工程化落地”。先掌握指派、网络流、VRP、整数规划、调度、库存和仿真，基本就能看懂大多数物流算法问题的结构。</div>
+    </section>
+
+    <footer class="footer">发布于 AI Pages · 物流运筹学习专题 · 2026-05-14</footer>
+  </main>
+</body>
+</html>
