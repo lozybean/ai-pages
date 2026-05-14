@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>二分图匹配：概念、场景与核心算法</title>
+  <style>
+    :root{--bg:#f6f7fb;--paper:#fff;--text:#1f2937;--muted:#667085;--line:#e5e7eb;--accent:#2563eb;--soft:#eff6ff;--green:#ecfdf5;--yellow:#fffbeb;--purple:#f5f3ff;--dark:#111827;--shadow:0 14px 38px rgba(15,23,42,.08)}
+    *{box-sizing:border-box} body{margin:0;background:linear-gradient(180deg,#eef2ff 0,#f6f7fb 280px);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif;line-height:1.76}.wrap{max-width:1060px;margin:0 auto;padding:42px 20px 80px}.back{display:inline-flex;margin-bottom:18px;color:var(--accent);font-weight:850;text-decoration:none}.hero,.card{background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:26px;box-shadow:var(--shadow)}.hero{padding:38px 36px;margin-bottom:24px}h1{margin:0 0 14px;font-size:clamp(30px,5vw,44px);line-height:1.18;letter-spacing:-.04em}h2{font-size:28px;margin:0 0 18px;line-height:1.35}h3{font-size:21px;margin:26px 0 10px}h4{font-size:17px;margin:20px 0 8px}.intro{color:var(--muted);font-size:18px;max-width:820px;margin:0}.tags{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}.tag{display:inline-flex;padding:6px 12px;border-radius:999px;background:var(--soft);border:1px solid #bfdbfe;color:#1d4ed8;font-size:14px;font-weight:800}.card{padding:30px;margin:22px 0}.toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.toc a{display:block;padding:14px 16px;border-radius:16px;background:#f9fafb;border:1px solid var(--line);color:var(--text);text-decoration:none;font-weight:800}.box{border-radius:18px;padding:18px 20px;margin:18px 0;border:1px solid var(--line)}.note{background:var(--soft);border-color:#bfdbfe}.example{background:var(--green);border-color:#bbf7d0}.warn{background:var(--yellow);border-color:#fde68a}.sum{background:var(--purple);border-color:#ddd6fe}.business{background:#f8fafc;border-color:#cbd5e1}.label{display:inline-block;font-size:13px;font-weight:900;letter-spacing:.04em;color:#374151;margin-bottom:6px;text-transform:uppercase}.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px}.mini{background:#f9fafb;border:1px solid var(--line);border-radius:18px;padding:18px}.mini h4{margin-top:0}table{width:100%;border-collapse:collapse;margin:16px 0;font-size:15px}th,td{border:1px solid var(--line);padding:11px 12px;text-align:left;vertical-align:top}th{background:#f3f4f6;font-weight:900}tr:nth-child(even) td{background:#fafafa}pre,.diagram{background:var(--dark);color:#f9fafb;padding:18px;border-radius:16px;overflow-x:auto;font-size:14px;line-height:1.7;white-space:pre-wrap;word-break:break-word}.diagram{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre}.step{display:grid;grid-template-columns:42px 1fr;gap:14px;align-items:start;margin:16px 0}.num{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:var(--accent);color:#fff;font-weight:900}.muted{color:var(--muted)}code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}ul,ol{padding-left:24px}li{margin:6px 0}.footer{text-align:center;color:var(--muted);margin-top:34px;font-size:14px}@media(max-width:720px){.wrap{padding:28px 14px 60px}.hero,.card{padding:22px 18px;border-radius:20px}h2{font-size:24px}}
+  </style>
+</head>
+<body>
+<main class="wrap">
+  <a class="back" href="index.html">← 返回物流运筹专题</a>
+  <section class="hero">
+    <h1>二分图匹配：概念、场景与核心算法</h1>
+    <p class="intro">从“谁能配谁”到“如何通过换位让整体匹配更多”，系统理解二分图匹配、增广路径、朴素 DFS 增广算法与 Hopcroft-Karp 算法。</p>
+    <div class="tags"><span class="tag">二分图</span><span class="tag">最大匹配</span><span class="tag">增广路径</span><span class="tag">DFS 增广</span><span class="tag">Hopcroft-Karp</span></div>
+  </section>
+
+  <section class="card"><h2>目录</h2><div class="toc"><a href="#concept">一、概念理解</a><a href="#scenario">二、应用场景</a><a href="#core">三、核心思想</a><a href="#dfs">四、朴素 DFS 增广算法</a><a href="#hk">五、Hopcroft-Karp 算法</a><a href="#compare">六、算法对比与业务边界</a></div></section>
+
+  <section id="concept" class="card">
+    <h2>一、概念理解</h2>
+    <h3>1. 什么是二分图？</h3>
+    <p><strong>二分图</strong>是一种特殊的图：所有点可以分成左右两组，边只允许连接左边和右边，不允许在同一侧内部连接。</p>
+    <div class="diagram">左侧集合 U                    右侧集合 V
+
+员工 A  --------------------  任务 1
+员工 B  --------------------  任务 2
+员工 C  --------------------  任务 3
+
+规则：只能 员工 -> 任务
+不能 员工 -> 员工，也不能 任务 -> 任务</div>
+    <table><thead><tr><th>左侧对象</th><th>右侧对象</th><th>边表示什么</th></tr></thead><tbody><tr><td>骑手</td><td>订单</td><td>骑手可以接这个订单</td></tr><tr><td>仓库</td><td>订单</td><td>仓库可以履约这个订单</td></tr><tr><td>员工</td><td>任务</td><td>员工具备完成任务的能力</td></tr><tr><td>学生</td><td>项目</td><td>学生申请或适合某个项目</td></tr><tr><td>广告</td><td>用户</td><td>广告可以展示给该用户</td></tr></tbody></table>
+    <h3>2. 什么是匹配？</h3>
+    <p><strong>匹配</strong>就是从图中选出一些边，并满足：每个点最多只出现在一条被选中的边里。</p>
+    <div class="grid2"><div class="box example"><span class="label">合法匹配</span><pre><code>骑手 A -> 订单 1
+骑手 B -> 订单 2
+骑手 C -> 订单 3</code></pre><p>每个骑手只接一个订单，每个订单只被一个骑手接。</p></div><div class="box warn"><span class="label">不合法匹配</span><pre><code>骑手 A -> 订单 1
+骑手 A -> 订单 2</code></pre><p>骑手 A 被重复使用了。</p></div></div>
+    <h3>3. 什么是最大匹配？</h3>
+    <p><strong>最大匹配</strong>是指：在所有合法匹配方案中，匹配数量最多的方案。它只关心“最多能配多少对”，不关心成本、距离、时效、收益。</p>
+    <div class="box note"><span class="label">一句话</span><p>二分图最大匹配回答的是：<strong>在给定的可行关系下，最多能完成多少组一对一配对？</strong></p></div>
+    <h3>4. 它和真实业务成本优化的关系</h3>
+    <p>真实业务通常不只问“能不能配”，还要问“配得好不好”。例如订单分仓里，还要考虑配送成本、时效、库存、仓库负载、拆单风险。因此纯二分图最大匹配通常不是最终业务方案，而是很多复杂分配模型的基础骨架。</p>
+    <div class="box sum"><span class="label">定位</span><p><strong>二分图匹配是分配类问题的最小原型。</strong>它帮助你先建立“谁可以匹配谁”的结构，然后才能继续考虑成本、容量、收益、风险等更复杂因素。</p></div>
+  </section>
+
+  <section id="scenario" class="card">
+    <h2>二、应用场景</h2><p>二分图匹配适合处理“一类对象匹配另一类对象”的问题，尤其适合最大化覆盖数量、判断资源是否足够、分析可行性瓶颈。</p>
+    <div class="grid3"><div class="mini"><h4>订单与骑手匹配</h4><p>左侧是订单，右侧是骑手，边表示骑手能在时效约束内接该订单。</p><p class="muted">可以判断当前运力最多能覆盖多少订单。</p></div><div class="mini"><h4>仓库与订单匹配</h4><p>左侧是仓库，右侧是订单，边表示仓库有库存且覆盖配送范围。</p><p class="muted">可以判断当前仓网和库存是否足以覆盖需求。</p></div><div class="mini"><h4>员工与任务匹配</h4><p>左侧是员工，右侧是任务，边表示员工具备完成任务的能力。</p><p class="muted">可以用于排班、项目分配、任务覆盖。</p></div><div class="mini"><h4>学生与项目匹配</h4><p>左侧是学生，右侧是项目，边表示学生申请或适合某项目。</p><p class="muted">可以分析最多有多少学生能获得项目。</p></div><div class="mini"><h4>资源可行性诊断</h4><p>用于诊断资源是否结构性不足、规则是否过严、候选关系是否太窄。</p></div><div class="mini"><h4>复杂优化的前置骨架</h4><p>先构造可行边，再叠加成本、容量、时效、库存等业务约束。</p></div></div>
+    <div class="box business"><span class="label">业务价值</span><p>在物流和供应链里，二分图匹配常用于回答“理论上最多能满足多少需求”。如果最大匹配都无法覆盖全部订单，问题就不是成本优化能解决的，而可能是库存、运力、仓网覆盖或业务规则本身出了问题。</p></div>
+  </section>
+
+  <section id="core" class="card">
+    <h2>三、核心思想：增广路径</h2>
+    <h3>1. 为什么不能只靠贪心？</h3><p>看一个员工分任务的例子：</p><pre><code>员工 A：能做任务 1、2
+员工 B：能做任务 1
+员工 C：能做任务 2、3</code></pre><p>如果贪心地先分 A -> 1、C -> 2，那么 B 没法匹配，只得到 2 个匹配。但更好的方案是：</p><pre><code>B -> 1
+A -> 2
+C -> 3</code></pre><p>匹配数是 3。说明前面的选择可能堵住后面的机会，必须允许已有匹配被重新调整。</p>
+    <h3>2. 什么是增广路径？</h3><p><strong>增广路径</strong>是一条可以让匹配数量增加 1 的换位链。</p><div class="diagram">B 想要 1
+1 原来给了 A
+A 可以去 2
+2 原来给了 C
+C 可以去 3
+3 是空的</div><p>于是可以调整为：</p><pre><code>B -> 1
+A -> 2
+C -> 3</code></pre><p>这条路径写成：</p><pre><code>B -> 1 -> A -> 2 -> C -> 3</code></pre>
+    <h3>3. 增广路径为什么重要？</h3><p>二分图最大匹配有一个核心事实：</p><pre><code>如果当前匹配不是最大匹配，那么一定存在增广路径。
+如果已经找不到任何增广路径，那么当前匹配就是最大匹配。</code></pre><p>所以二分图匹配算法的本质就是：不断找增广路径，不断翻转匹配，直到找不到为止。</p>
+    <div class="box sum"><span class="label">直觉总结</span><p>匹配不是“谁先占到就永远归谁”，而是“可以通过一串让位和换位，让整体匹配更多”。这就是朴素 DFS 和 Hopcroft-Karp 的共同基础。</p></div>
+  </section>
+
+  <section id="dfs" class="card">
+    <h2>四、常见算法一：朴素 DFS 增广算法</h2>
+    <h3>1. 算法解决什么问题？</h3><p>朴素 DFS 增广算法解决二分图最大匹配问题。它从每个左侧点出发，尝试找一个右侧点。如果右侧点被占，就递归尝试让占用者换到别的位置。</p>
+    <h3>2. 通俗理解：递归让位</h3><pre><code>A 想坐座位 1。
+如果 1 空着，A 直接坐下。
+如果 1 被 B 坐了，就问 B 能不能换到别的座位。
+如果 B 能换走，A 就坐 1。
+如果 B 换不走，A 再试别的座位。</code></pre><p>这就是“递归让位”。它比简单贪心强，因为它会尝试调整已有分配。</p>
+    <h3>3. 伪代码</h3><pre><code>match[v] = 当前匹配右侧点 v 的左侧点；如果 v 空闲，则为空。
+
+dfs(u):
+    遍历 u 能连接的所有右侧点 v:
+        如果 v 本轮已经尝试过，跳过
+        标记 v 本轮已尝试
+
+        如果 v 当前没人匹配:
+            match[v] = u
+            return true
+
+        old_u = match[v]
+        如果 dfs(old_u) 成功:
+            match[v] = u
+            return true
+
+    return false
+
+answer = 0
+对每个左侧点 u:
+    清空 visited
+    如果 dfs(u) 成功:
+        answer += 1</code></pre>
+    <h3>4. 为什么每轮 DFS 要清空 visited？</h3><p><code>visited[v]</code> 表示“当前这一轮从某个左侧点出发时，右侧点 v 已经试过”。它不是全局永久标记。</p><pre><code>这一次从 A 出发，任务 1 走不通，
+不代表下一次从 B 出发，任务 1 也走不通。</code></pre><p>每个起点不同，匹配状态也可能变化，所以每次 DFS 前都要重新初始化 visited。</p>
+    <h3>5. 手算示例</h3><p>左侧是员工 A、B、C、D，右侧是任务 1、2、3、4。可行关系：</p><pre><code>A -> 1, 2
+B -> 1, 3
+C -> 2, 3
+D -> 3, 4</code></pre>
+    <h4>第 1 轮：尝试 A</h4><p>A 可以选 1、2。任务 1 空闲，所以 A -> 1。</p>
+    <h4>第 2 轮：尝试 B</h4><p>B 想选 1，但 1 被 A 占了。尝试让 A 换位置。A 还能去 2，而 2 空闲。</p><pre><code>原来：A -> 1
+调整：B -> 1，A -> 2</code></pre>
+    <h4>第 3 轮：尝试 C</h4><p>C 想选 2，但 2 被 A 占了。尝试让 A 换到 1，但 1 被 B 占了。再尝试让 B 换到 3，而 3 是空的。</p><div class="diagram">C -> 2 -> A -> 1 -> B -> 3</div><p>翻转后：</p><pre><code>C -> 2
+A -> 1
+B -> 3</code></pre>
+    <h4>第 4 轮：尝试 D</h4><p>D 可以选 3、4。3 已经被 B 占了，尝试换位可能较复杂；再看 4，4 空闲，所以 D -> 4。</p><p>最终得到：</p><pre><code>A -> 1
+C -> 2
+B -> 3
+D -> 4</code></pre><p>匹配数是 4，达到完美匹配。</p>
+    <h3>6. 复杂度与适用场景</h3><p>设左侧点数为 |U|，边数为 |E|。每次 DFS 粗略为 O(E)，最多对每个左侧点 DFS 一次，所以复杂度约为：</p><pre><code>O(|U| × |E|)</code></pre><p>如果左右两侧规模都接近 n，且图很稠密，边数约为 n²，那么复杂度约为 O(n³)。</p>
+    <div class="grid2"><div class="box example"><span class="label">适合</span><ul><li>中小规模最大匹配</li><li>可行性判断</li><li>简单一对一资源分配</li><li>复杂优化的初始解或降级方案</li></ul></div><div class="box warn"><span class="label">不适合</span><ul><li>超大规模实时匹配</li><li>需要考虑成本、收益、时效</li><li>有容量约束、一对多、多对一</li><li>复杂业务规则和多目标优化</li></ul></div></div>
+    <div class="box business"><span class="label">业务视角</span><p>朴素 DFS 增广算法的本质是：不要因为一个资源已经被占用就放弃，而是尝试通过一串局部调整，让更多需求被满足。</p></div>
+  </section>
+
+  <section id="hk" class="card">
+    <h2>五、常见算法二：Hopcroft-Karp 算法</h2>
+    <h3>1. 它解决什么问题？</h3><p>Hopcroft-Karp 解决的仍然是二分图最大匹配。区别是：</p><pre><code>朴素 DFS：一次找一条增广路径。
+Hopcroft-Karp：一轮找一批最短增广路径。</code></pre><div class="box note"><span class="label">核心提升</span><p>Hopcroft-Karp 的优势不是结果更“业务最优”，而是效率更高。它仍然不考虑成本，只保证最大匹配数量。</p></div>
+    <h3>2. 通俗理解：更聪明的换座调度员</h3><p>朴素 DFS 像是一个人一个人找座位；Hopcroft-Karp 像调度员，先看所有没座位的人谁离空位最近，然后本轮只处理这些最短换座方案，并尽量一批处理。</p><pre><code>先别一个一个乱挪。
+我先看所有没座位的人，谁离空座位最近？
+最近需要挪几次？
+这一轮只处理这些“最短换座方案”。</code></pre>
+    <h3>3. BFS 和 DFS 分别做什么？</h3><div class="grid2"><div class="mini"><h4>BFS：找最近空位，建立层次图</h4><p>从所有未匹配左侧点同时出发，一层一层扩展，找出当前最短增广路径的长度。它不直接修改匹配。</p></div><div class="mini"><h4>DFS：沿层次图批量增广</h4><p>从每个未匹配左侧点依次 DFS，但只能沿 BFS 标出的层次关系走。找到路径后执行匹配翻转。</p></div></div>
+    <h3>4. BFS 不是找到一条就停</h3><p>假设第一轮 BFS 发现：</p><pre><code>A 的最短增广路径长度 = 1
+B 的最短增广路径长度 = 1
+C 的最短增广路径长度 = 3</code></pre><p>这一轮的最短增广路径长度是 1，本轮只处理长度为 1 的路径。但 BFS 不能发现 A 有长度 1 就完全停止，因为它还要识别 B 也有长度 1 的机会，方便 DFS 批量增广。</p><div class="box warn"><span class="label">准确理解</span><p>BFS 找到最短层后，不再向更深层扩展；但要把当前最短层的候选尽量扫完。</p></div>
+    <h3>5. 一轮 Hopcroft-Karp 的过程</h3><div class="step"><div class="num">1</div><div><h4>从所有未匹配左侧点出发做 BFS</h4><p>找到当前最短增广路径长度，并建立层次图。</p></div></div><div class="step"><div class="num">2</div><div><h4>从每个未匹配左侧点依次 DFS</h4><p>DFS 只能沿着 BFS 层次图走，不能随便找更长路径。</p></div></div><div class="step"><div class="num">3</div><div><h4>找到一条最短增广路径就翻转匹配</h4><p>如果右侧点空闲，直接匹配；如果被占，递归尝试让占用者沿层次图换走。</p></div></div><div class="step"><div class="num">4</div><div><h4>本轮尽可能找多条互不冲突的最短路径</h4><p>冲突不是事后统一检查，而是在 DFS 过程中通过当前匹配表实时处理。</p></div></div><div class="step"><div class="num">5</div><div><h4>重新 BFS</h4><p>一轮结束后，匹配关系已经变化，需要重新计算新的最短增广路径。</p></div></div>
+    <h3>6. 冲突是怎么处理的？</h3><p>Hopcroft-Karp 通常不是“并行 DFS 后再检查冲突”，而是顺序 DFS，并实时维护两个匹配表：</p><pre><code>pairU[u] = 左侧点 u 当前匹配的右侧点
+pairV[v] = 右侧点 v 当前匹配的左侧点</code></pre><table><thead><tr><th>情况</th><th>处理方式</th></tr></thead><tbody><tr><td>v 是空闲的</td><td>直接匹配 u -> v，当前增广路径成功。</td></tr><tr><td>v 已经被 old_u 占用</td><td>递归尝试让 old_u 沿 BFS 层次图换到别的位置；如果 old_u 换走，u 就占用 v。</td></tr></tbody></table><p>冲突不是事后发现，而是在访问右点时通过 <code>pairV</code> 立即知道它是否已被占用。</p>
+    <h3>7. 一个例子：直接空位与换位链</h3><p>未匹配左侧点 A、B、C；空闲右侧点 1、2；边关系：</p><pre><code>A -> 1
+B -> 1, 2
+C -> 2</code></pre><p>BFS 发现 A、B、C 都能一步到达空闲右点，所以最短增广路径长度是 1。DFS 按顺序处理：</p><pre><code>dfs(A):
+    1 空闲，A -> 1 成功
+
+dfs(B):
+    1 已经被 A 占，A 换不了
+    再看 2，2 空闲，B -> 2 成功
+
+dfs(C):
+    2 已经被 B 占，尝试让 B 换走
+    B 尝试 1，但 1 被 A 占，A 换不了
+    C 本轮失败</code></pre><p>这一轮结果：</p><pre><code>A -> 1
+B -> 2
+C 未匹配</code></pre><p>整个过程没有“并行后统一解决冲突”，而是每一步都根据当前匹配关系实时判断。</p>
+    <h3>8. 更能体现批量增广的例子</h3><p>当前已有匹配：</p><pre><code>B -> 1
+D -> 3
+F -> 5</code></pre><p>未匹配左侧点是 A、C、E，可行关系：</p><pre><code>A -> 1，B -> 2
+C -> 3，D -> 4
+E -> 5，F -> 6</code></pre><p>空闲右侧点是 2、4、6，存在三条互不冲突的最短增广路径：</p><div class="diagram">A -> 1 -> B -> 2
+C -> 3 -> D -> 4
+E -> 5 -> F -> 6</div><p>Hopcroft-Karp 先用 BFS 发现当前最短路径长度是 3，然后 DFS 在这一层次图中尽可能找出这三条路径，一轮完成多次增广。</p>
+    <h3>9. 最短路径与局部选择</h3><p>Hopcroft-Karp 确实有局部选择：先处理当前最短增广路径；同一层里有冲突时，先找到哪条路径就可能先选哪条。但这不会影响最终最大匹配数量。</p><pre><code>只要还存在增广路径，当前匹配就不是最大；
+如果不存在增广路径，当前匹配就是最大。</code></pre><p>局部选择可能影响具体匹配方案、中间过程、某一轮增广了哪几条路径，但不会影响最终最大匹配数量。</p><div class="box warn"><span class="label">业务提醒</span><p>这只对“最大匹配数量”成立。如果边有成本、收益、时效差异，Hopcroft-Karp 不会保证业务成本最低。</p></div>
+    <h3>10. 伪代码</h3><pre><code>初始化 pairU, pairV 为空匹配
+
+while BFS() 能找到增广路径:
+    对每个未匹配的左侧点 u:
+        如果 DFS(u) 成功:
+            matching += 1
+
+BFS():
+    从所有未匹配左侧点同时入队，dist = 0
+    沿着 未匹配边 -> 匹配边 的结构分层
+    判断是否能到达空闲右侧点
+    返回是否存在增广路径
+
+DFS(u):
+    遍历 u 的右侧邻居 v:
+        如果 v 空闲:
+            匹配 u-v
+            return true
+
+        如果 v 被 old_u 占用，且 old_u 在 BFS 的下一层:
+            如果 DFS(old_u) 成功:
+                匹配 u-v
+                return true
+
+    标记 u 在当前层次图中失败
+    return false</code></pre>
+    <h3>11. 复杂度与适用场景</h3><p>Hopcroft-Karp 的时间复杂度是：</p><pre><code>O(E × sqrt(V))</code></pre><p>相比朴素 DFS 的 O(U × E)，在大规模图上会明显更快。</p><div class="grid2"><div class="box example"><span class="label">适合</span><ul><li>中大规模二分图最大匹配</li><li>资源覆盖判断</li><li>可行性诊断</li><li>一对一、无成本匹配</li><li>需要比朴素 DFS 更稳定的性能</li></ul></div><div class="box warn"><span class="label">不适合</span><ul><li>成本最小化</li><li>收益最大化</li><li>容量约束</li><li>一对多、多对一</li><li>多目标业务优化</li></ul></div></div>
+    <div class="box sum"><span class="label">一句话记忆</span><p><strong>Hopcroft-Karp = 增广路径 + BFS 找最短层次 + DFS 批量执行。</strong></p><p>它不是一个人一个人乱换座，而是先找出所有“最短换座方案”，再在这一轮里尽可能多地安排换位。</p></div>
+  </section>
+
+  <section id="compare" class="card">
+    <h2>六、算法对比与业务边界</h2>
+    <table><thead><tr><th>维度</th><th>朴素 DFS 增广算法</th><th>Hopcroft-Karp 算法</th></tr></thead><tbody><tr><td>解决问题</td><td>二分图最大匹配</td><td>二分图最大匹配</td></tr><tr><td>是否考虑成本</td><td>不考虑</td><td>不考虑</td></tr><tr><td>核心思想</td><td>一次找一条增广路径，递归让位</td><td>一轮找一批最短增广路径</td></tr><tr><td>搜索方式</td><td>DFS</td><td>BFS 分层 + DFS 增广</td></tr><tr><td>复杂度</td><td>O(U × E)</td><td>O(E × sqrt(V))</td></tr><tr><td>实现难度</td><td>低</td><td>中等</td></tr><tr><td>适合规模</td><td>小中规模</td><td>中大规模</td></tr><tr><td>核心价值</td><td>用递归让位找到一条增广路径</td><td>用层次图一次处理一批最短增广路径</td></tr></tbody></table>
+    <div class="box business"><span class="label">业务边界</span><p>二分图最大匹配类算法只解决“最多能匹配多少”，不解决“哪种匹配成本最低”。如果每条边有成本、收益、时效、风险或容量差异，问题会进入指派问题、加权二分图匹配、最小费用最大流或整数规划的范围。</p></div>
+    <div class="box sum"><span class="label">最终总结</span><p><strong>朴素 DFS</strong>让你理解“增广路径”和“递归让位”；<strong>Hopcroft-Karp</strong>让你理解“BFS 分层”和“批量最短增广”。它们都是二分图最大匹配算法，核心目标是最大化匹配数量，而不是优化业务成本。</p></div>
+  </section>
+
+  <p class="footer">物流运筹学习专题 · 二分图匹配</p>
+</main>
+</body>
+</html>
