@@ -1,117 +1,255 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>物流运筹算法核心知识地图｜AI Pages</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>物流运筹算法核心知识地图</title>
   <style>
-    :root{--bg:#f6f7fb;--paper:#fff;--text:#1f2937;--muted:#667085;--line:#e5e7eb;--accent:#2563eb;--accent2:#0f766e;--soft:#eff6ff;--green:#ecfdf5;--orange:#fff7ed;--purple:#f5f3ff;--shadow:0 18px 48px rgba(15,23,42,.08)}
-    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at top left,#eaf2ff 0,transparent 34rem),radial-gradient(circle at top right,#ecfdf5 0,transparent 26rem),var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",Arial,sans-serif;line-height:1.74}.wrap{max-width:1080px;margin:0 auto;padding:44px 20px 78px}.back{display:inline-flex;margin-bottom:18px;color:var(--accent);text-decoration:none;font-weight:850}.hero{background:linear-gradient(135deg,#eff6ff,#fff 56%,#f8fafc);border:1px solid var(--line);border-radius:28px;padding:40px 38px;box-shadow:var(--shadow)}.eyebrow{display:inline-flex;padding:6px 13px;border-radius:999px;background:var(--soft);color:var(--accent);font-size:13px;font-weight:850;margin-bottom:14px}h1{margin:0 0 14px;font-size:clamp(34px,5vw,52px);line-height:1.1;letter-spacing:-.045em}.intro{max-width:820px;margin:0;color:var(--muted);font-size:17px}.toc{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}.toc a{display:inline-flex;padding:7px 12px;border-radius:999px;background:#fff;border:1px solid #bfdbfe;color:var(--accent);text-decoration:none;font-size:13px;font-weight:800}.section{margin-top:30px}.section h2{margin:0 0 14px;font-size:28px;letter-spacing:-.03em}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.card{background:var(--paper);border:1px solid var(--line);border-radius:22px;padding:24px;box-shadow:0 12px 32px rgba(15,23,42,.05)}.card h3{margin:0 0 10px;font-size:21px;line-height:1.35}.card p{margin:8px 0 0;color:#344054}.muted{color:var(--muted)}.tagrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.tag{display:inline-flex;padding:4px 10px;border-radius:999px;background:#f2f4f7;color:#475467;font-size:12px;font-weight:760}.full{grid-column:1/-1}.map{width:100%;border-collapse:separate;border-spacing:0;background:#fff;border:1px solid var(--line);border-radius:22px;overflow:hidden;box-shadow:0 12px 32px rgba(15,23,42,.05)}.map th,.map td{padding:15px 16px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}.map th{background:#f8fafc;color:#344054;font-size:14px}.map tr:last-child td{border-bottom:0}.map td:first-child{font-weight:850;color:#111827;white-space:nowrap}.pill{display:inline-flex;margin:2px 4px 2px 0;padding:3px 8px;border-radius:999px;background:var(--soft);color:var(--accent);font-size:12px;font-weight:760}.callout{padding:22px 24px;border-radius:22px;border:1px solid #bfdbfe;background:#eff6ff;color:#1e3a8a}.callout strong{color:#1d4ed8}.formula{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;background:#0f172a;color:#e5e7eb;border-radius:16px;padding:18px 20px;overflow:auto;font-size:14px;line-height:1.7}.priority{counter-reset:item}.priority li{margin:10px 0;padding-left:4px}.note{border-left:5px solid var(--accent2);background:#f0fdfa;border-radius:16px;padding:18px 20px;color:#134e4a}.footer{margin-top:34px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}@media(max-width:760px){.wrap{padding:30px 14px 58px}.hero,.card{padding:22px;border-radius:20px}.grid{grid-template-columns:1fr}.map{display:block;overflow-x:auto}.map td:first-child{white-space:normal}}
+    :root {
+      --bg: #f6f7fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #5f6b7a;
+      --primary: #2454d6;
+      --primary-soft: #edf2ff;
+      --green: #0f766e;
+      --green-soft: #e6f5f2;
+      --orange: #b45309;
+      --orange-soft: #fff7ed;
+      --purple: #6d28d9;
+      --purple-soft: #f3e8ff;
+      --red: #b91c1c;
+      --red-soft: #fef2f2;
+      --border: #e5e7eb;
+      --code: #f3f4f6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      line-height: 1.75;
+      background: linear-gradient(180deg, #eef3ff 0%, var(--bg) 260px);
+    }
+    .container { max-width: 1120px; margin: 0 auto; padding: 40px 22px 80px; }
+    header {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 26px;
+      padding: 34px 34px 30px;
+      box-shadow: 0 16px 36px rgba(36, 84, 214, 0.08);
+      margin-bottom: 26px;
+    }
+    .eyebrow { color: var(--primary); font-weight: 800; letter-spacing: .06em; font-size: 14px; }
+    h1 { font-size: 36px; line-height: 1.2; margin: 10px 0 14px; }
+    .subtitle { color: var(--muted); font-size: 18px; max-width: 900px; margin: 0; }
+    .section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 28px 30px;
+      margin: 18px 0;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+    }
+    h2 { font-size: 26px; margin: 0 0 16px; }
+    h3 { font-size: 20px; margin: 22px 0 10px; }
+    p { margin: 8px 0 14px; }
+    .lead {
+      font-size: 18px;
+      background: var(--primary-soft);
+      border-left: 5px solid var(--primary);
+      padding: 18px 20px;
+      border-radius: 16px;
+      margin-top: 18px;
+    }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px 18px 16px;
+      background: #fff;
+    }
+    .card h3 { margin-top: 0; }
+    .tag {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--primary);
+      background: var(--primary-soft);
+      margin-bottom: 8px;
+    }
+    .tag.green { color: var(--green); background: var(--green-soft); }
+    .tag.orange { color: var(--orange); background: var(--orange-soft); }
+    .tag.purple { color: var(--purple); background: var(--purple-soft); }
+    .tag.red { color: var(--red); background: var(--red-soft); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+      overflow: hidden;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+    }
+    th, td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { text-align: left; background: #f8fafc; font-weight: 800; }
+    tr:last-child td { border-bottom: none; }
+    ul { padding-left: 22px; margin: 8px 0 12px; }
+    li { margin: 5px 0; }
+    .formula, pre {
+      background: var(--code);
+      padding: 16px 18px;
+      border-radius: 16px;
+      overflow-x: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      line-height: 1.65;
+      white-space: pre-wrap;
+    }
+    .map-line { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 16px; }
+    .node { background: #fff; border: 1px solid var(--border); border-radius: 999px; padding: 9px 13px; font-weight: 700; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04); }
+    .arrow { color: var(--muted); font-weight: 900; }
+    .note { background: #fffbeb; border: 1px solid #fde68a; color: #7c2d12; border-radius: 16px; padding: 16px 18px; margin-top: 14px; }
+    @media (max-width: 760px) {
+      .container { padding: 24px 14px 60px; }
+      header, .section { padding: 22px 18px; border-radius: 20px; }
+      h1 { font-size: 29px; }
+      h2 { font-size: 23px; }
+      .grid, .grid-3 { grid-template-columns: 1fr; }
+      table { font-size: 14px; }
+      th, td { padding: 10px; }
+    }
   </style>
 </head>
 <body>
-  <main class="wrap">
-    <a class="back" href="./">← 返回物流运筹专题</a>
-    <section class="hero">
-      <div class="eyebrow">物流运筹 · 核心知识地图</div>
+  <main class="container">
+    <header>
+      <div class="eyebrow">LOGISTICS OR KNOWLEDGE MAP</div>
       <h1>物流运筹算法核心知识地图</h1>
-      <p class="intro">这是一份面向零基础学习者和工程化参与者的知识地图。它不按传统教材目录展开，而是从物流业务决策出发，说明每类运筹知识解决什么问题、适合什么场景、学习时应该抓住哪些关键概念。</p>
-      <nav class="toc" aria-label="目录">
-        <a href="#modeling">建模语言</a><a href="#scene-map">场景对应</a><a href="#knowledge">知识模块</a><a href="#priority">学习优先级</a><a href="#engineering">工程化关注点</a>
-      </nav>
-    </section>
+      <p class="subtitle">这份地图聚焦物流场景中的核心运筹知识：建模语言、问题类型、算法工具、场景对应、评估与工程化落地。已补充常见遗漏模块，包括约束规划、排队论、随机/鲁棒优化、分解算法、仿真与调度。</p>
+      <div class="lead">物流运筹的核心不是背公式，而是把真实业务问题翻译成：<strong>决策变量、目标函数、约束条件、输入数据、输出结果和评估指标</strong>。</div>
+    </header>
 
-    <section id="modeling" class="section">
-      <h2>一、先掌握运筹问题的通用语言</h2>
-      <div class="grid">
-        <article class="card"><h3>1. 决策变量</h3><p>变量回答“系统到底要决定什么”。例如订单是否由某个仓发货、某辆车是否访问某个配送点、某条线路运多少货、某个商品补多少库存。</p></article>
-        <article class="card"><h3>2. 目标函数</h3><p>目标回答“什么叫更好”。物流里常见目标包括履约成本最低、准时率最高、拆单率最低、仓库负载均衡、车辆利用率更高、异常风险更低。</p></article>
-        <article class="card"><h3>3. 约束条件</h3><p>约束回答“哪些规则不能违反或尽量不要违反”。硬约束包括库存、产能、车容量、时间窗、禁运规则；软约束包括少拆单、少绕路、负载均衡和体验稳定。</p></article>
-        <article class="card"><h3>4. 求解与评估</h3><p>运筹不是写完模型就结束。还要考虑求解时间、无解率、fallback、可解释性、策略回放、在线灰度和业务可执行性。</p></article>
-        <div class="card full">
-          <h3>通用建模模板</h3>
-          <pre class="formula">业务问题：要优化哪一类物流决策？
-决策变量：系统需要选择、分配、排序、调度或运输什么？
-目标函数：成本、时效、稳定性、体验、资源利用率如何权衡？
-硬约束：库存、容量、时间窗、线路、品类、法规等不可违反规则。
-软约束：偏好、体验、均衡、少拆单、少变更等可转为惩罚项的规则。
-输入数据：订单、库存、仓库产能、线路成本、车辆、司机、地图、历史需求。
-输出结果：分仓方案、路线方案、调拨方案、补货方案、排班方案或异常处置方案。
-评估指标：成本、准时率、超时率、拆单率、负载、无解率、求解耗时、fallback 触发率。</pre>
-        </div>
+    <section class="section">
+      <h2>一、总览：从业务问题到算法系统</h2>
+      <p>物流系统里的算法决策通常沿着履约链路展开。每一个环节都可以抽象成不同类型的优化问题。</p>
+      <div class="map-line">
+        <span class="node">需求预测</span><span class="arrow">→</span>
+        <span class="node">库存分配</span><span class="arrow">→</span>
+        <span class="node">订单分仓</span><span class="arrow">→</span>
+        <span class="node">仓内作业</span><span class="arrow">→</span>
+        <span class="node">干线调拨</span><span class="arrow">→</span>
+        <span class="node">末端配送</span><span class="arrow">→</span>
+        <span class="node">异常恢复</span>
       </div>
-    </section>
-
-    <section id="scene-map" class="section">
-      <h2>二、物流场景与运筹知识对应表</h2>
-      <table class="map">
-        <thead><tr><th>物流场景</th><th>核心问题</th><th>对应知识</th><th>典型输出</th></tr></thead>
+      <table>
+        <thead>
+          <tr><th>物流环节</th><th>典型决策</th><th>对应运筹问题</th></tr>
+        </thead>
         <tbody>
-          <tr><td>订单分仓</td><td>订单从哪个仓发、是否拆单、如何满足库存和时效</td><td><span class="pill">指派问题</span><span class="pill">整数规划</span><span class="pill">组合优化</span><span class="pill">多目标优化</span></td><td>订单-仓库分配方案</td></tr>
-          <tr><td>司机派单</td><td>订单分给哪个司机、如何兼顾距离、时效和工作量</td><td><span class="pill">二分图匹配</span><span class="pill">最小费用流</span><span class="pill">在线优化</span></td><td>订单-司机匹配方案</td></tr>
-          <tr><td>末端配送路径</td><td>多辆车如何访问多个配送点，并满足容量和时间窗</td><td><span class="pill">TSP</span><span class="pill">VRP</span><span class="pill">CVRP</span><span class="pill">VRPTW</span><span class="pill">启发式算法</span></td><td>车辆路线和访问顺序</td></tr>
-          <tr><td>干线运输 / 调拨</td><td>货物在仓、分拨中心、城市之间如何流动</td><td><span class="pill">图论</span><span class="pill">网络流</span><span class="pill">最小费用流</span><span class="pill">多商品流</span><span class="pill">网络设计</span></td><td>线路流量和运输计划</td></tr>
-          <tr><td>库存与补货</td><td>货放在哪、放多少、什么时候补、补多少</td><td><span class="pill">库存控制</span><span class="pill">随机优化</span><span class="pill">动态规划</span><span class="pill">鲁棒优化</span></td><td>安全库存、补货点、补货量</td></tr>
-          <tr><td>仓网规划</td><td>仓库建在哪里、覆盖哪些区域、服务水平如何设计</td><td><span class="pill">设施选址</span><span class="pill">覆盖问题</span><span class="pill">容量选址</span><span class="pill">多目标优化</span></td><td>仓网布局和区域覆盖</td></tr>
-          <tr><td>仓内作业</td><td>拣货、分拣、波次、库位、包装台如何组织</td><td><span class="pill">调度问题</span><span class="pill">排队论</span><span class="pill">布局优化</span><span class="pill">离散事件仿真</span></td><td>波次计划、拣货路径、作业排班</td></tr>
-          <tr><td>异常恢复</td><td>爆仓、缺货、延误、司机爽约后如何重算方案</td><td><span class="pill">滚动优化</span><span class="pill">重调度</span><span class="pill">鲁棒优化</span><span class="pill">仿真评估</span></td><td>重派、切流、降级和恢复方案</td></tr>
+          <tr><td>需求预测</td><td>未来订单量、品类需求、区域需求如何变化</td><td>预测模型 + 随机优化 / 鲁棒优化</td></tr>
+          <tr><td>库存分配</td><td>货放在哪、放多少、何时补</td><td>库存优化、随机规划、多级库存控制</td></tr>
+          <tr><td>订单分仓</td><td>订单从哪个仓发，是否拆合单</td><td>指派问题、整数规划、组合优化</td></tr>
+          <tr><td>仓内作业</td><td>波次划分、拣货路径、人员排班</td><td>调度问题、TSP、排队论、离散事件仿真</td></tr>
+          <tr><td>干线调拨</td><td>货在仓、城市、分拨之间如何流动</td><td>网络流、最小费用流、多商品流、网络设计</td></tr>
+          <tr><td>末端配送</td><td>车辆怎么走、订单怎么派</td><td>TSP、VRP、VRPTW、动态优化</td></tr>
+          <tr><td>异常恢复</td><td>爆仓、延误、缺货后如何重算</td><td>在线优化、滚动优化、鲁棒优化、重调度</td></tr>
         </tbody>
       </table>
     </section>
 
-    <section id="knowledge" class="section">
-      <h2>三、核心知识模块</h2>
+    <section class="section">
+      <h2>二、第一层：建模语言</h2>
+      <p>建模能力是物流运筹的入口。零基础学习时，最先要掌握的不是求解算法，而是如何把业务问题翻译成优化模型。</p>
       <div class="grid">
-        <article class="card"><h3>1. 线性规划 LP</h3><p>适合连续资源分配问题，例如运量、产能、预算的分配。核心是目标和约束都是线性的。</p><div class="tagrow"><span class="tag">资源分配</span><span class="tag">成本最小</span></div></article>
-        <article class="card"><h3>2. 整数规划 / 混合整数规划 IP / MIP</h3><p>适合“选不选、派不派、走不走、建不建”的离散决策，是订单分仓、选址、排班、线路选择的核心表达工具。</p><div class="tagrow"><span class="tag">0-1 变量</span><span class="tag">复杂约束</span></div></article>
-        <article class="card"><h3>3. 图论与最短路径</h3><p>物流网络天然是图：仓库、城市、站点是节点，运输线路是边。最短路径用于路径选择、中转路径和网络分析。</p><div class="tagrow"><span class="tag">Dijkstra</span><span class="tag">A*</span><span class="tag">路径成本</span></div></article>
-        <article class="card"><h3>4. 匹配与指派</h3><p>解决订单-仓、订单-司机、任务-人员的一对一或多对多分配问题。匈牙利算法适合标准指派，容量约束常转向最小费用流或整数规划。</p><div class="tagrow"><span class="tag">二分图匹配</span><span class="tag">匈牙利算法</span><span class="tag">成本矩阵</span></div></article>
-        <article class="card"><h3>5. 网络流与最小费用流</h3><p>适合描述货物流、车辆流、库存流。关键元素是节点供需、边容量、单位成本和流量守恒。</p><div class="tagrow"><span class="tag">最大流</span><span class="tag">最小费用流</span><span class="tag">多商品流</span></div></article>
-        <article class="card"><h3>6. TSP / VRP 路径优化</h3><p>TSP 是单车访问多点，VRP 是多车服务多点。真实配送通常还会叠加容量、时间窗、取送货、司机工时和动态插单。</p><div class="tagrow"><span class="tag">TSP</span><span class="tag">VRP</span><span class="tag">CVRP</span><span class="tag">VRPTW</span></div></article>
-        <article class="card"><h3>7. 调度 Scheduling</h3><p>解决任务、设备、人力、车辆在时间轴上的安排问题。仓内波次、人员排班、干线班车、包装台作业都属于调度范畴。</p><div class="tagrow"><span class="tag">排班</span><span class="tag">资源日历</span><span class="tag">作业顺序</span></div></article>
-        <article class="card"><h3>8. 库存控制</h3><p>处理需求不确定下的补货和备货问题。关键概念包括安全库存、补货点、提前期、缺货成本、持有成本和服务水平。</p><div class="tagrow"><span class="tag">安全库存</span><span class="tag">补货点</span><span class="tag">服务水平</span></div></article>
-        <article class="card"><h3>9. 设施选址与覆盖问题</h3><p>回答仓库、前置仓、分拨中心和站点应建在哪里，服务哪些区域。常见模型包括 Facility Location、Set Covering、Max Coverage。</p><div class="tagrow"><span class="tag">仓网规划</span><span class="tag">区域覆盖</span><span class="tag">容量选址</span></div></article>
-        <article class="card"><h3>10. 启发式与元启发式</h3><p>大规模物流问题常无法在可接受时间内求精确最优。贪心、局部搜索、2-opt、模拟退火、禁忌搜索、遗传算法、大邻域搜索用于快速取得足够好解。</p><div class="tagrow"><span class="tag">局部搜索</span><span class="tag">LNS</span><span class="tag">近似最优</span></div></article>
-        <article class="card"><h3>11. 约束规划 CP / CP-SAT</h3><p>适合表达组合约束、时间窗、排班、作业顺序等复杂规则。OR-Tools 的 CP-SAT 在调度和离散优化中非常常用。</p><div class="tagrow"><span class="tag">约束满足</span><span class="tag">CP-SAT</span><span class="tag">排班调度</span></div></article>
-        <article class="card"><h3>12. 随机优化与鲁棒优化</h3><p>物流中需求、时效、产能、司机在线状态都会波动。随机优化关注概率分布，鲁棒优化关注在不利场景下仍然可接受。</p><div class="tagrow"><span class="tag">不确定性</span><span class="tag">场景分析</span><span class="tag">风险缓冲</span></div></article>
-        <article class="card"><h3>13. 排队论</h3><p>用于分析仓库、分拣线、包装台、站点和客服等服务系统的等待、拥堵和瓶颈。它不直接给出路线，但能解释产能和排队风险。</p><div class="tagrow"><span class="tag">等待时间</span><span class="tag">瓶颈分析</span><span class="tag">服务率</span></div></article>
-        <article class="card"><h3>14. 离散事件仿真</h3><p>用于在上线前回放历史订单、模拟仓内流程、验证策略在高峰、异常、爆仓场景下的表现。</p><div class="tagrow"><span class="tag">回放评估</span><span class="tag">What-if</span><span class="tag">极端场景</span></div></article>
-        <article class="card"><h3>15. 在线优化与滚动优化</h3><p>物流决策不是一次性静态问题。订单、库存、车辆、天气和异常不断变化，所以需要周期性重算、局部修正和实时 fallback。</p><div class="tagrow"><span class="tag">实时决策</span><span class="tag">滚动重算</span><span class="tag">动态插单</span></div></article>
-        <article class="card"><h3>16. 多目标优化</h3><p>物流目标经常冲突：成本、时效、体验、稳定性、公平性、资源利用率不可能同时最优。常见做法是加权、分层目标或约束优先级。</p><div class="tagrow"><span class="tag">成本-时效权衡</span><span class="tag">惩罚项</span><span class="tag">Pareto</span></div></article>
+        <div class="card"><span class="tag">决策变量</span><h3>我要决定什么？</h3><p>例如订单 i 是否由仓 j 发货，车辆 k 是否访问配送点 p，每条线路运输多少件货。</p></div>
+        <div class="card"><span class="tag green">目标函数</span><h3>我要优化什么？</h3><p>例如总成本最低、总距离最短、准时率最高、拆单最少、仓库负载更均衡。</p></div>
+        <div class="card"><span class="tag orange">约束条件</span><h3>哪些规则不能违反？</h3><p>例如库存不能超、车辆容量不能超、订单必须准时、司机工作时长有限、线路有容量。</p></div>
+        <div class="card"><span class="tag purple">评估指标</span><h3>怎么证明策略更好？</h3><p>例如成本、时效、超时率、无解率、fallback 触发率、求解耗时、现场可执行率。</p></div>
       </div>
+      <h3>通用建模模板</h3>
+      <pre>业务问题：要解决哪个物流决策？
+决策变量：系统需要决定什么？
+目标函数：希望优化哪个指标？
+硬约束：绝对不能违反的条件是什么？
+软约束：尽量满足但可以付出惩罚的偏好是什么？
+输入数据：订单、库存、车辆、线路、时效、成本等
+输出结果：分仓方案、路径方案、调拨方案、排班方案等
+异常情况：无解、超时、数据异常、约束冲突时怎么处理？
+评估指标：用什么指标判断方案好坏？</pre>
     </section>
 
-    <section id="priority" class="section">
-      <h2>四、零基础学习优先级</h2>
-      <div class="card full">
-        <ol class="priority">
-          <li><strong>先学建模语言：</strong>变量、目标、约束、输入、输出、评估指标。</li>
-          <li><strong>再学指派问题：</strong>从订单分仓、司机派单入手，理解成本矩阵和容量约束。</li>
-          <li><strong>学习整数规划和求解器：</strong>用 OR-Tools / PuLP 跑通一个小型分仓模型。</li>
-          <li><strong>学习图论和网络流：</strong>理解干线运输、调拨、仓到城市供给分配。</li>
-          <li><strong>学习 VRP：</strong>理解多车、多点、容量、时间窗为什么会快速变复杂。</li>
-          <li><strong>补库存、调度、排队论：</strong>把运输优化扩展到供应链和仓内作业。</li>
-          <li><strong>最后学习仿真与评估：</strong>验证策略收益、风险、无解率、稳定性和可执行性。</li>
-        </ol>
-      </div>
-      <div class="note"><strong>学习判断标准：</strong>不要只问“我会不会推公式”，而要问“我能不能把一个物流业务问题拆成变量、目标和约束，并说明适合用哪类模型解决”。这比一开始追求理论证明更有效。</div>
-    </section>
-
-    <section id="engineering" class="section">
-      <h2>五、工程化落地时必须关注的知识</h2>
-      <div class="grid">
-        <article class="card"><h3>1. 硬约束与软约束分离</h3><p>库存不足、容量超限、禁运规则通常是硬约束；少拆单、少绕路、负载均衡通常是软约束。混在一起会导致模型不可解释或经常无解。</p></article>
-        <article class="card"><h3>2. 求解失败是常态</h3><p>无可行解、求解超时、输入异常、状态变化、约束过强都很常见。线上系统必须支持超时返回当前最好解、规则降级、局部重算和人工介入。</p></article>
-        <article class="card"><h3>3. 数据质量决定算法上限</h3><p>经纬度、库存、产能、车辆状态、线路成本、时效预测一旦不准，优化器只会稳定地产生错误决策。数据校验和异常监控是算法系统的一部分。</p></article>
-        <article class="card"><h3>4. 评估比单次最优更重要</h3><p>物流算法要通过历史回放、A/B、仿真、极端场景压测来证明收益。只看一次求解结果，很容易忽视稳定性和现场执行风险。</p></article>
+    <section class="section">
+      <h2>三、第二层：核心问题类型</h2>
+      <div class="grid-3">
+        <div class="card"><span class="tag">指派问题</span><h3>分给谁</h3><p>用于订单分仓、司机派单、任务分配。核心是把一组任务分配给一组资源。</p><ul><li>成本矩阵</li><li>二分图匹配</li><li>匈牙利算法</li><li>容量约束指派</li></ul></div>
+        <div class="card"><span class="tag green">路径问题</span><h3>怎么走</h3><p>用于末端配送、干线路径、仓内拣货。核心是选择访问顺序和线路。</p><ul><li>最短路径</li><li>TSP</li><li>VRP</li><li>VRPTW</li></ul></div>
+        <div class="card"><span class="tag orange">网络流问题</span><h3>怎么流</h3><p>用于干线调拨、多仓供给、城市需求满足。核心是在有容量和成本的网络上安排货物流动。</p><ul><li>最大流</li><li>最小费用流</li><li>多商品流</li><li>网络设计</li></ul></div>
+        <div class="card"><span class="tag purple">数学规划</span><h3>选不选、派不派</h3><p>用于复杂约束下的选择与组合决策。许多物流问题最终都会被表达成 LP、IP、MIP 或 CP 模型。</p><ul><li>LP / IP / MIP</li><li>CP-SAT / 约束规划</li><li>0-1 变量</li><li>硬约束与软约束</li></ul></div>
+        <div class="card"><span class="tag">库存优化</span><h3>放多少</h3><p>用于备货、补货、安全库存、多仓库存配置。重点是用库存成本换服务水平。</p><ul><li>安全库存</li><li>补货点</li><li>缺货成本</li><li>需求不确定性</li></ul></div>
+        <div class="card"><span class="tag green">调度问题</span><h3>什么时候做</h3><p>用于司机排班、仓内波次、分拣线任务、干线班车。重点是资源、时间和任务之间的匹配。</p><ul><li>Scheduling</li><li>Job Shop / Flow Shop</li><li>时间窗</li><li>作业瓶颈</li></ul></div>
+        <div class="card"><span class="tag orange">选址与覆盖</span><h3>建在哪里、覆盖谁</h3><p>用于仓网规划、前置仓布局、站点服务范围划分。</p><ul><li>Facility Location</li><li>Set Covering</li><li>Max Coverage</li><li>p-median / p-center</li></ul></div>
+        <div class="card"><span class="tag purple">随机与鲁棒优化</span><h3>不确定时怎么决策</h3><p>用于需求波动、时效波动、大促峰值、天气和异常扰动。</p><ul><li>Stochastic Programming</li><li>Robust Optimization</li><li>Chance Constraints</li><li>Scenario Planning</li></ul></div>
+        <div class="card"><span class="tag red">仿真与排队</span><h3>系统会不会堵</h3><p>用于仓内瓶颈、分拨能力、站点拥堵、大促压测和策略回放。</p><ul><li>Queueing Theory</li><li>Discrete Event Simulation</li><li>Monte Carlo</li><li>What-if 分析</li></ul></div>
       </div>
     </section>
 
     <section class="section">
-      <div class="callout"><strong>核心结论：</strong>物流运筹算法的学习主线不是“从数学教材一路啃到高级优化”，而是“物流场景 → 变量目标约束 → 典型模型 → 求解器 demo → 策略评估 → 工程化落地”。先掌握指派、网络流、VRP、整数规划、调度、库存和仿真，基本就能看懂大多数物流算法问题的结构。</div>
+      <h2>四、第三层：关键算法与工具</h2>
+      <table>
+        <thead><tr><th>知识模块</th><th>解决的问题</th><th>物流应用</th><th>入门重点</th></tr></thead>
+        <tbody>
+          <tr><td>图论</td><td>节点、边、路径、连通关系</td><td>物流网络、城市中转、干线路径</td><td>理解物流系统可以抽象成图</td></tr>
+          <tr><td>最短路径</td><td>从一个点到另一个点怎么走成本最低</td><td>干线路径、配送路径、仓内拣货</td><td>Dijkstra、A*、边权含义</td></tr>
+          <tr><td>网络流</td><td>带容量和成本的流量分配</td><td>干线调拨、多仓供给、线路分流</td><td>最大流、最小费用流、多商品流</td></tr>
+          <tr><td>线性规划</td><td>连续资源分配</td><td>运力、库存、运输量分配</td><td>变量、目标、线性约束</td></tr>
+          <tr><td>整数规划 / 混合整数规划</td><td>离散选择问题</td><td>分仓、选址、派车、排班</td><td>0-1 变量、MIP、求解器</td></tr>
+          <tr><td>约束规划 / CP-SAT</td><td>复杂逻辑约束和组合搜索</td><td>排班、波次、车辆路径、时间窗约束</td><td>变量域、约束传播、可行解搜索</td></tr>
+          <tr><td>匹配 / 指派</td><td>任务与资源的一对一或一对多分配</td><td>订单分仓、司机派单、任务分配</td><td>成本矩阵、匈牙利算法、最小费用流</td></tr>
+          <tr><td>TSP / VRP</td><td>多点访问和多车配送路径</td><td>末端配送、同城配送、大件配送、仓内拣货</td><td>容量、时间窗、服务时长、访问顺序</td></tr>
+          <tr><td>调度算法</td><td>任务、机器、人员、时间的安排</td><td>仓内波次、分拣线、司机排班、干线班车</td><td>Job Shop、Flow Shop、资源约束项目调度</td></tr>
+          <tr><td>库存控制</td><td>补货时机、补货量和安全库存</td><td>多仓备货、前置仓补货、缺货控制</td><td>EOQ、Reorder Point、Newsvendor、动态规划</td></tr>
+          <tr><td>选址与覆盖</td><td>设施位置和服务范围</td><td>仓网规划、站点布局、前置仓布局</td><td>Facility Location、Set Covering、p-median</td></tr>
+          <tr><td>启发式 / 元启发式</td><td>大规模复杂问题近似求解</td><td>大型 VRP、复杂排班、仓内路径</td><td>贪心、局部搜索、2-opt、禁忌搜索、模拟退火、遗传算法、LNS</td></tr>
+          <tr><td>分解算法</td><td>大规模问题拆分求解</td><td>大规模选址、路径、调拨、排班</td><td>列生成、Benders 分解、拉格朗日松弛、Branch-and-Price</td></tr>
+          <tr><td>随机 / 鲁棒优化</td><td>不确定需求和扰动下的决策</td><td>大促备货、异常恢复、峰值运力准备</td><td>场景集、机会约束、鲁棒约束、安全边界</td></tr>
+          <tr><td>排队论</td><td>服务能力、等待时间、拥堵瓶颈</td><td>仓内拣货/包装台、分拨中心、站点揽派</td><td>到达率、服务率、利用率、等待时间</td></tr>
+          <tr><td>仿真</td><td>验证策略在动态系统中的表现</td><td>仓内作业、爆仓恢复、大促压测、策略回放</td><td>历史回放、What-if、离散事件仿真、蒙特卡洛</td></tr>
+        </tbody>
+      </table>
+      <div class="note"><strong>学习提醒：</strong>零基础阶段不需要先证明单纯形法、对偶理论或复杂启发式算法。先学会识别问题类型、建立模型、调用工具、解释结果。真正进阶时，再补约束规划、分解算法、随机/鲁棒优化和仿真。</div>
     </section>
 
-    <footer class="footer">发布于 AI Pages · 物流运筹学习专题 · 2026-05-14</footer>
+    <section class="section">
+      <h2>五、第四层：物流场景与知识对应</h2>
+      <table>
+        <thead><tr><th>应用场景</th><th>关键问题</th><th>核心知识</th><th>典型输出</th></tr></thead>
+        <tbody>
+          <tr><td>订单分仓</td><td>哪个仓发货，是否拆单</td><td>指派问题、整数规划、多目标优化、约束规划</td><td>订单-仓库分配方案</td></tr>
+          <tr><td>司机派单</td><td>哪个司机服务哪些订单</td><td>匹配、指派、动态优化、滚动优化</td><td>司机-订单分配方案</td></tr>
+          <tr><td>末端配送</td><td>车辆路线和送达顺序</td><td>TSP、VRP、VRPTW、启发式算法、CP-SAT</td><td>车辆路线计划</td></tr>
+          <tr><td>干线调拨</td><td>货物走哪条线路、运多少</td><td>网络流、最小费用流、多商品流、网络设计</td><td>线路运输计划</td></tr>
+          <tr><td>仓库选址</td><td>仓建在哪里、覆盖哪些区域</td><td>设施选址、覆盖问题、整数规划、鲁棒优化</td><td>仓网规划方案</td></tr>
+          <tr><td>库存补货</td><td>放多少货、什么时候补</td><td>库存控制、随机优化、动态规划、Newsvendor</td><td>补货点和补货量</td></tr>
+          <tr><td>仓内波次</td><td>哪些订单一起拣货/分拣</td><td>聚类、组合优化、调度、排队论、仿真</td><td>波次计划和作业顺序</td></tr>
+          <tr><td>人员/车辆排班</td><td>谁在什么时间服务什么任务</td><td>Scheduling、约束规划、整数规划</td><td>排班表、车辆班次计划</td></tr>
+          <tr><td>大促保障</td><td>峰值需求下如何提前准备资源</td><td>容量规划、随机/鲁棒优化、仿真压测</td><td>备货、运力、仓容和降级预案</td></tr>
+          <tr><td>异常恢复</td><td>爆仓、延误、缺货后如何重排</td><td>在线优化、滚动优化、重调度、鲁棒优化</td><td>重派、切流、降级方案</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section">
+      <h2>六、第五层：评估与工程化落地</h2>
+      <p>工业场景下，运筹算法不是“求出一个答案”就结束。它必须能被评估、上线、监控、解释和回滚。</p>
+      <div class="grid">
+        <div class="card"><span class="tag green">效果指标</span><ul><li>履约成本</li><li>平均时效 / 准时率</li><li>超时率 / 违约率</li><li>拆单率</li><li>仓库负载均衡</li><li>车辆利用率</li></ul></div>
+        <div class="card"><span class="tag orange">系统指标</span><ul><li>求解耗时</li><li>无解率</li><li>超时率</li><li>fallback 触发率</li><li>数据异常率</li><li>任务恢复成功率</li></ul></div>
+        <div class="card"><span class="tag purple">评估方法</span><ul><li>历史订单回放</li><li>策略 A/B 对比</li><li>What-if 分析</li><li>极端场景压测</li><li>离散事件仿真</li><li>线上灰度实验</li></ul></div>
+        <div class="card"><span class="tag">工程化能力</span><ul><li>标准输入输出</li><li>约束配置</li><li>异步求解任务</li><li>状态流转</li><li>超时与降级</li><li>结果解释与归因</li></ul></div>
+      </div>
+    </section>
   </main>
 </body>
 </html>
