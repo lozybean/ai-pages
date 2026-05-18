@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>复杂度代谢</title>
+  <style>
+    :root {
+      --bg: #f7f4ee;
+      --paper: #fffdf8;
+      --ink: #24211d;
+      --muted: #6f675f;
+      --line: #e4dbcf;
+      --accent: #8a5a35;
+      --accent-soft: #f1e5d7;
+      --code-bg: #f5efe6;
+      --shadow: rgba(62, 45, 32, 0.10);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top left, #f4e9dc 0, transparent 30rem), var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.78;
+    }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 44px 22px 86px; }
+    header.hero {
+      padding: 34px 34px 32px;
+      background: rgba(255, 253, 248, 0.86);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      box-shadow: 0 22px 70px var(--shadow);
+      margin-bottom: 30px;
+    }
+    .eyebrow {
+      display: inline-flex;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 850;
+      margin-bottom: 16px;
+    }
+    h1 {
+      margin: 0 0 16px;
+      font-size: clamp(36px, 6vw, 60px);
+      line-height: 1.05;
+      letter-spacing: -0.055em;
+    }
+    .subtitle {
+      margin: 0;
+      max-width: 740px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+    .meta { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 9px; }
+    .tag {
+      display: inline-flex;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: #f0e8de;
+      color: #63574d;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    article {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      box-shadow: 0 18px 60px var(--shadow);
+      padding: 34px;
+    }
+    h2 { margin: 42px 0 14px; font-size: 26px; line-height: 1.35; letter-spacing: -0.025em; color: #2b241f; }
+    h2:first-child { margin-top: 0; }
+    h3 { margin: 26px 0 10px; font-size: 20px; }
+    p { margin: 14px 0; }
+    strong { color: #3b2a1f; }
+    blockquote {
+      margin: 24px 0;
+      padding: 18px 20px;
+      border-left: 4px solid var(--accent);
+      background: #f7efe6;
+      border-radius: 0 16px 16px 0;
+      color: #3d332b;
+      font-weight: 700;
+    }
+    .lead { font-size: 19px; color: #3f372f; }
+    .note, .summary, .formula {
+      margin: 24px 0;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: #fbf7f0;
+    }
+    .summary { background: linear-gradient(135deg, #f2e5d7, #fffaf3); border-color: #d9c6b1; }
+    .summary h2 { margin-top: 0; }
+    .formula { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; color: #4a3a2e; }
+    .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0; }
+    .bad, .good, .box {
+      padding: 18px;
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background: #fffaf4;
+    }
+    .bad { border-color: #e4c7bc; background: #fff5f1; }
+    .good { border-color: #cbd9c7; background: #f4faf1; }
+    .label {
+      display: inline-flex;
+      margin-bottom: 8px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 900;
+      background: rgba(138, 90, 53, 0.12);
+      color: var(--accent);
+    }
+    ul, ol { padding-left: 1.3em; }
+    li { margin: 8px 0; }
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      margin: 22px 0;
+      background: var(--paper);
+    }
+    th, td { padding: 14px 16px; border-bottom: 1px solid var(--line); vertical-align: top; text-align: left; }
+    th { background: var(--accent-soft); color: var(--accent); font-size: 14px; font-weight: 900; }
+    tr:last-child td { border-bottom: none; }
+    td + td, th + th { border-left: 1px solid var(--line); }
+    code { padding: 2px 6px; border-radius: 7px; background: var(--code-bg); color: #4a3a2e; }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin: 24px 0;
+    }
+    .step {
+      padding: 14px 12px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fffaf4;
+      text-align: center;
+      font-weight: 850;
+      color: #4b3a2d;
+    }
+    .step small { display: block; margin-top: 6px; font-weight: 650; color: var(--muted); line-height: 1.45; }
+    @media (max-width: 760px) {
+      .wrap { padding: 28px 16px 56px; }
+      header.hero, article { padding: 24px; border-radius: 22px; }
+      .compare { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <div class="eyebrow">思考专题｜AI Coding 与工程吸收能力</div>
+      <h1>复杂度代谢</h1>
+      <p class="subtitle">AI Coding 时代，工程的瓶颈正在从生成效率转向吸收能力。真正稀缺的不是产出，而是把产出转化为可靠、可维护、可删除、可复用的软件能力。</p>
+      <div class="meta">
+        <span class="tag">AI Coding</span>
+        <span class="tag">复杂度代谢</span>
+        <span class="tag">工程治理</span>
+        <span class="tag">吸收能力</span>
+        <span class="tag">2026-05-18</span>
+      </div>
+    </header>
+
+    <article>
+      <p class="lead">AI Coding 的最大变化，不只是代码写得更快，而是生成成本突然降到了接近零。代码、文档、测试、脚本、方案、Agent 链路都可以快速生成，但人的判断、团队的吸收、系统的维护，并没有同步变快。</p>
+
+      <p>这会制造一个新的工程问题：产出变得太容易，而吸收、验证、删除和沉淀仍然很难。</p>
+
+      <p>过去，写代码本身很贵。一个功能要设计、实现、调试、测试、上线，生产成本天然会限制产出规模。现在，AI 可以在很短时间内生成大量代码和方案，让“增加”变得前所未有地便宜。</p>
+
+      <p>但软件系统的长期成本，通常不来自第一次写出来，而来自后续理解、维护、排障、扩展、删除和承担责任。AI 降低了生成成本，却不自动降低这些长期成本。</p>
+
+      <blockquote>AI Coding 时代，真正稀缺的不是生成能力，而是把生成物转化为可靠能力的代谢能力。</blockquote>
+
+      <h2>一、AI 让生成进入过剩时代</h2>
+      <p>AI 产出很像现代高热量食物。</p>
+      <p>高热量食物本身不是问题，问题是摄入变得太容易，而人的奖励系统和代谢机制还停留在过去。短期满足很强，长期代价很隐蔽。</p>
+      <p>AI Coding 也是类似。代码不是有毒，文档不是有毒，Agent 不是有毒，token 也不是有毒。问题是它们变得太容易生成，而人类和组织仍然容易把“有产出痕迹”误认为“有真实价值”。</p>
+
+      <table>
+        <thead>
+          <tr><th>AI 让什么变便宜</th><th>短期感受</th><th>长期风险</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>代码生成</td><td>功能很快出现</td><td>重复实现、隐含假设、维护成本上升</td></tr>
+          <tr><td>文档生成</td><td>沉淀看起来充分</td><td>长而不准、没人维护、真实知识更分散</td></tr>
+          <tr><td>测试生成</td><td>覆盖看起来变多</td><td>测试不贴近真实风险，形成虚假安全感</td></tr>
+          <tr><td>方案生成</td><td>思路显得完整</td><td>没有失败条件，无法区分好坏方案</td></tr>
+          <tr><td>Agent 链路生成</td><td>流程显得智能</td><td>链路过长、责任模糊、调试困难</td></tr>
+        </tbody>
+      </table>
+
+      <p>真正危险的不是 AI 不会生成，而是生成太顺滑以后，团队失去了停下来判断的动力。</p>
+      <blockquote>AI 让产出突然现代化了，但我们的判断和代谢机制还停留在产出稀缺时代。</blockquote>
+
+      <h2>二、瓶颈从生产能力转向吸收能力</h2>
+      <p>AI 之后，问题不再只是“能不能写出来”。更关键的问题变成：</p>
+      <ul>
+        <li>团队能不能理解它？</li>
+        <li>系统能不能接住它？</li>
+        <li>测试能不能覆盖它？</li>
+        <li>线上能不能观测它？</li>
+        <li>维护者能不能负责它？</li>
+        <li>未来能不能安全删除它？</li>
+        <li>它能不能变成可复用资产，而不是一次性堆积？</li>
+      </ul>
+
+      <p>这些问题共同指向一个概念：吸收能力。</p>
+      <p>吸收不是“把代码合进去”。真正的吸收是：AI 产出进入系统以后，被理解、被验证、被维护、被复用，并且在未来必要时可以被修改或删除。</p>
+
+      <div class="formula">AI Coding 的有效产出 = 被吸收的可靠能力 - 新增复杂度负债</div>
+
+      <p>如果一个 AI 生成物没有被理解，没有 owner，没有测试，没有复用，没有删除条件，它并没有真正被吸收。它只是进入了仓库，变成未来某个人需要理解的负担。</p>
+
+      <blockquote>未被吸收的产出，不是库存，而是负债。</blockquote>
+
+      <h2>三、代码量和 token 是成本，不是成果</h2>
+      <p>AI Coding 时代，最容易出错的是目标函数。</p>
+      <p>如果用代码量衡量工作量，系统会奖励多写少删；如果用 token 消耗衡量工作量，系统会奖励多调用、长上下文、复杂链路；如果用 Agent 节点数量衡量智能化程度，系统会奖励流程膨胀。</p>
+
+      <table>
+        <thead>
+          <tr><th>错误指标</th><th>会鼓励什么</th><th>会惩罚什么</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>代码量</td><td>多写、重复写、少删除</td><td>复用、简化、删除历史复杂度</td></tr>
+          <tr><td>token 消耗</td><td>多调用、长链路、上下文堆积</td><td>压缩、沉淀、少问、先思考</td></tr>
+          <tr><td>PR 数量</td><td>频繁改动、可见动作</td><td>少改、稳定、避免错误复杂度</td></tr>
+          <tr><td>Agent 节点数</td><td>流程复杂化、自动化表演</td><td>简单规则、人工判断、短链路</td></tr>
+          <tr><td>文档长度</td><td>堆解释、堆背景</td><td>清晰压缩、可执行结论</td></tr>
+        </tbody>
+      </table>
+
+      <p>代码量可以观察复杂度变化，token 可以观察资源消耗，PR 数可以观察活动频率。但它们都不是价值本身。</p>
+
+      <div class="compare">
+        <div class="bad">
+          <span class="label">错误目标</span>
+          <p>价值 = 代码量 + token 消耗 + PR 数 + Agent 节点数</p>
+        </div>
+        <div class="good">
+          <span class="label">更好的目标</span>
+          <p>价值 = 可靠结果 - 复杂度成本 - 维护成本 - 资源消耗 - 风险暴露</p>
+        </div>
+      </div>
+
+      <blockquote>把成本当成果，系统就会奖励自己变胖。</blockquote>
+
+      <h2>四、AI 产物必须可被反驳</h2>
+      <p>AI 产物最危险的地方，不只是它可能错，而是它很擅长把错误说得完整。</p>
+      <p>一个 AI 生成方案可能结构清晰、术语准确、覆盖了很多边界条件，看起来已经“考虑全面”。但如果它没有失败条件，就仍然只是一个漂亮候选。</p>
+      <p>真正要问的是：</p>
+      <ul>
+        <li>它解决什么真实问题？</li>
+        <li>它不解决什么问题？</li>
+        <li>哪些 case 会让它失败？</li>
+        <li>哪些指标证明它没有价值？</li>
+        <li>它增加的复杂度由什么收益证明？</li>
+        <li>什么情况下它应该被删除、降级或停止使用？</li>
+      </ul>
+
+      <p>如果这些问题答不上来，AI 产物就还不是工程资产。它只是“看起来像资产”的文本或代码。</p>
+
+      <blockquote>AI 产物如果没有失败条件，就只是看起来像工程资产。</blockquote>
+
+      <h2>五、复杂度代谢不只是删除</h2>
+      <p>说到“代谢”，人们很容易只想到删除。删除当然重要，但复杂度代谢不只是清理垃圾。</p>
+      <p>更准确地说，代谢包括四件事：</p>
+
+      <table>
+        <thead>
+          <tr><th>代谢动作</th><th>含义</th><th>工程对应</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>吸收</td><td>真正进入系统，被理解、验证、维护</td><td>code review、测试、owner、监控、文档</td></tr>
+          <tr><td>转化</td><td>从一次性产出变成长期能力</td><td>模板、规则、测试集、平台能力、团队规范</td></tr>
+          <tr><td>排出</td><td>移除无法证明价值的复杂度</td><td>删除无 owner 代码、合并重复实现、废弃过期链路</td></tr>
+          <tr><td>调节</td><td>控制生成速度，避免超过吸收能力</td><td>限制主链路接入、设置实验区、阶段性清理</td></tr>
+        </tbody>
+      </table>
+
+      <p>删除只是代谢的一部分。更重要的是，系统要能决定什么可以变成自己的一部分，什么只能作为实验记录，什么应该及时排出。</p>
+
+      <blockquote>代谢不是清理垃圾，而是决定什么能变成身体的一部分。</blockquote>
+
+      <h2>六、从“生成—使用”到“生成—约束—吸收—代谢—沉淀”</h2>
+      <p>AI Coding 最危险的流程是：</p>
+      <blockquote>生成 → 使用</blockquote>
+      <p>这太短了。它把 AI 输出直接当成工程资产，跳过了判断、吸收和代谢。</p>
+      <p>更成熟的流程应该是：</p>
+
+      <div class="flow">
+        <div class="step">生成<small>AI 给出候选代码、方案或文档</small></div>
+        <div class="step">约束<small>明确业务边界、失败条件和硬约束</small></div>
+        <div class="step">吸收<small>review、测试、owner、监控和维护责任</small></div>
+        <div class="step">代谢<small>删除、合并、压缩、降级和停止</small></div>
+        <div class="step">沉淀<small>模板、规则、测试库、平台能力和共识</small></div>
+      </div>
+
+      <p>生成只是入口。吸收和沉淀才决定它是不是资产。</p>
+      <p>很多 AI 产物可以作为探索存在，但不能直接进入主链路；很多 prompt 可以作为经验记录，但不值得变成长期流程；很多代码可以作为 demo 存在，但不应该成为生产依赖。</p>
+
+      <blockquote>生成只是入口，吸收和沉淀才决定它是不是资产。</blockquote>
+
+      <h2>七、每个 AI 产物都要有归宿</h2>
+      <p>不是所有 AI 产物都要被消灭，但所有 AI 产物都要有归宿。</p>
+      <p>它可以被保留、被删除，也可以被降级。</p>
+
+      <h3>保留条件</h3>
+      <ul>
+        <li>有真实使用场景；</li>
+        <li>有明确 owner；</li>
+        <li>有测试或反例；</li>
+        <li>有监控或可验证结果；</li>
+        <li>有复用价值；</li>
+        <li>有维护边界；</li>
+        <li>有收益大于复杂度的证据。</li>
+      </ul>
+
+      <h3>删除条件</h3>
+      <ul>
+        <li>无 owner；</li>
+        <li>无调用；</li>
+        <li>无测试；</li>
+        <li>与已有能力重复；</li>
+        <li>只服务一次性探索；</li>
+        <li>review 或维护成本高于收益；</li>
+        <li>无法说明业务价值；</li>
+        <li>复杂度超过收益。</li>
+      </ul>
+
+      <h3>降级条件</h3>
+      <ul>
+        <li>暂时有启发，但不适合进入主链路；</li>
+        <li>适合作为 demo，但不适合作为生产依赖；</li>
+        <li>适合作为 prompt 片段，但不适合固化为流程；</li>
+        <li>适合作为反例或测试素材，而不是长期模块；</li>
+        <li>适合作为文档记录，而不是继续维护的代码。</li>
+      </ul>
+
+      <p>这套归宿机制，比简单说“要删除代码”更重要。因为工程里最常见的不是立刻删除，而是大量东西处在模糊状态：好像还有点用，但没人负责；好像以后可能用，但没有证据；好像删除有风险，但保留也持续制造理解成本。</p>
+
+      <blockquote>不是所有 AI 产物都要被消灭，但所有 AI 产物都要有归宿。</blockquote>
+
+      <h2>八、组织也要奖励代谢能力</h2>
+      <p>AI Coding 的复杂度问题，不只是技术问题，也是组织激励问题。</p>
+      <p>组织通常更容易看见：</p>
+      <ul>
+        <li>谁写了代码；</li>
+        <li>谁发了 PR；</li>
+        <li>谁上线了功能；</li>
+        <li>谁做了工具；</li>
+        <li>谁跑了很多 AI 流程。</li>
+      </ul>
+      <p>但组织不容易看见：</p>
+      <ul>
+        <li>谁避免了错误复杂度；</li>
+        <li>谁删除了历史包袱；</li>
+        <li>谁减少了 token 浪费；</li>
+        <li>谁把复杂 prompt 固化成简单规则；</li>
+        <li>谁砍掉了不值得继续的 Agent 链路；</li>
+        <li>谁阻止了一个看似完整但风险很高的方案进入主链路。</li>
+      </ul>
+
+      <p>如果组织只奖励产出痕迹，不奖励复杂度代谢，那么 AI 会放大这种偏差。团队会越来越会生成，也越来越难维护。</p>
+
+      <div class="note"><strong>AI 时代更稀缺的工程能力，不是写得更多，而是知道什么不该写、什么不该留、什么不该进入主链路。</strong></div>
+
+      <div class="summary">
+        <h2>核心结论</h2>
+        <ul>
+          <li><strong>AI Coding 的瓶颈正在从生成效率转向吸收能力。</strong>能写出来不等于能被系统接住。</li>
+          <li><strong>未被吸收的产出不是库存，而是负债。</strong>无 owner、无测试、无复用、无删除条件的 AI 产物会变成长期复杂度。</li>
+          <li><strong>代码量和 token 是成本，不是成果。</strong>它们可以作为观察指标，但不能作为价值目标。</li>
+          <li><strong>AI 产物必须可被反驳。</strong>没有失败条件的方案，只是看起来像工程资产。</li>
+          <li><strong>复杂度代谢不只是删除。</strong>它包括吸收、转化、排出和调节。</li>
+          <li><strong>每个 AI 产物都要有归宿。</strong>保留、删除、降级，都比长期悬置更健康。</li>
+          <li><strong>AI Coding 的核心治理问题，不是生产效率，而是复杂度代谢。</strong></li>
+        </ul>
+      </div>
+    </article>
+  </main>
+</body>
+</html>
