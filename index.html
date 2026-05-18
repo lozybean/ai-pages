@@ -19,75 +19,14 @@
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
     body { margin: 0; background: radial-gradient(circle at top left, #e8f5ef 0, transparent 34rem), radial-gradient(circle at top right, #fff1df 0, transparent 28rem), var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", Arial, sans-serif; line-height: 1.72; }
-
-    .site-nav {
-      position: sticky;
-      top: 0;
-      z-index: 20;
-      backdrop-filter: blur(18px);
-      background: rgba(246, 244, 239, 0.78);
-      border-bottom: 1px solid rgba(230, 223, 209, 0.86);
-    }
-    .nav-inner {
-      max-width: 1040px;
-      margin: 0 auto;
-      padding: 12px 20px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 18px;
-    }
-    .brand {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      color: var(--ink);
-      text-decoration: none;
-      font-weight: 900;
-      letter-spacing: -0.02em;
-      white-space: nowrap;
-    }
-    .brand-mark {
-      width: 30px;
-      height: 30px;
-      display: inline-grid;
-      place-items: center;
-      border-radius: 10px;
-      background: var(--accent);
-      color: #fff;
-      font-size: 13px;
-      font-weight: 900;
-      box-shadow: 0 8px 22px rgba(36, 91, 79, 0.22);
-    }
-    .nav-links {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-    }
-    .nav-link {
-      display: inline-flex;
-      align-items: center;
-      padding: 8px 12px;
-      border-radius: 999px;
-      color: #344054;
-      text-decoration: none;
-      font-size: 14px;
-      font-weight: 800;
-      border: 1px solid transparent;
-    }
-    .nav-link:hover {
-      background: rgba(255, 253, 248, 0.72);
-      border-color: var(--line);
-      color: var(--accent);
-    }
-    .nav-link.active {
-      background: var(--accent-soft);
-      color: var(--accent);
-      border-color: rgba(36, 91, 79, 0.14);
-    }
-
+    .site-nav { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(18px); background: rgba(246, 244, 239, 0.78); border-bottom: 1px solid rgba(230, 223, 209, 0.86); }
+    .nav-inner { max-width: 1040px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+    .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-weight: 900; letter-spacing: -0.02em; white-space: nowrap; }
+    .brand-mark { width: 30px; height: 30px; display: inline-grid; place-items: center; border-radius: 10px; background: var(--accent); color: #fff; font-size: 13px; font-weight: 900; box-shadow: 0 8px 22px rgba(36, 91, 79, 0.22); }
+    .nav-links { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .nav-link { display: inline-flex; align-items: center; padding: 8px 12px; border-radius: 999px; color: #344054; text-decoration: none; font-size: 14px; font-weight: 800; border: 1px solid transparent; }
+    .nav-link:hover { background: rgba(255, 253, 248, 0.72); border-color: var(--line); color: var(--accent); }
+    .nav-link.active { background: var(--accent-soft); color: var(--accent); border-color: rgba(36, 91, 79, 0.14); }
     .wrap { max-width: 1040px; margin: 0 auto; padding: 42px 20px 80px; }
     header { margin-bottom: 38px; }
     .eyebrow { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 16px; padding: 7px 13px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 800; }
@@ -96,7 +35,6 @@
     .notice { margin-top: 22px; padding: 18px 20px; background: rgba(255, 253, 248, 0.82); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 12px 36px var(--shadow); color: #344054; }
     .notice strong { color: var(--accent); }
     .notice a { color: var(--accent); font-weight: 850; }
-
     .section-title { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 34px 0 16px; }
     .section-title h2 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
     .section-title span { color: var(--muted); font-size: 14px; }
@@ -116,29 +54,17 @@
     a.secondary { background: transparent; color: var(--accent); border-color: rgba(36, 91, 79, 0.25); }
     footer { margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
     code { padding: 2px 6px; border-radius: 7px; background: #eee8dc; color: #344054; }
-
-    @media (max-width: 720px) {
-      .nav-inner { padding: 10px 16px; align-items: flex-start; flex-direction: column; gap: 10px; }
-      .nav-links { justify-content: flex-start; }
-      .wrap { padding: 28px 16px 56px; }
-      .card { padding: 22px; }
-      .card-head { display: block; }
-      .date { display: inline-flex; margin-top: 12px; }
-      .section-title { display: block; }
-      .section-title span { display: block; margin-top: 6px; }
-    }
+    @media (max-width: 720px) { .nav-inner { padding: 10px 16px; align-items: flex-start; flex-direction: column; gap: 10px; } .nav-links { justify-content: flex-start; } .wrap { padding: 28px 16px 56px; } .card { padding: 22px; } .card-head { display: block; } .date { display: inline-flex; margin-top: 12px; } .section-title { display: block; } .section-title span { display: block; margin-top: 6px; } }
   </style>
 </head>
 <body>
   <nav class="site-nav" aria-label="主导航">
     <div class="nav-inner">
-      <a class="brand" href="index.html" aria-label="AI Pages 首页">
-        <span class="brand-mark">AI</span>
-        <span>AI Pages</span>
-      </a>
+      <a class="brand" href="index.html" aria-label="AI Pages 首页"><span class="brand-mark">AI</span><span>AI Pages</span></a>
       <div class="nav-links">
         <a class="nav-link active" href="index.html">首页</a>
         <a class="nav-link" href="topics/logistics-or/">物流运筹专题</a>
+        <a class="nav-link" href="topics/think/">思考专题</a>
       </div>
     </div>
   </nav>
@@ -154,6 +80,13 @@
     <div class="section-title"><h2>最新发布</h2><span>按发布时间倒序排列</span></div>
 
     <section class="grid">
+      <article class="card">
+        <div class="card-head"><h3>判断的刹车</h3><span class="date">发布：2026-05-18</span></div>
+        <p class="desc">讨论什么样的判断才有决策价值：不仅要听起来正确，还要能区分情况、约束行动，并承担被现实打脸的风险。</p>
+        <div class="meta"><span class="tag">思考专题</span><span class="tag">判断质量</span><span class="tag">可反驳</span><span class="tag">决策密度</span><span class="tag">AI Coding</span></div>
+        <div class="actions"><a class="button primary" href="topics/think/judgment-brake.html">打开页面</a><a class="button secondary" href="topics/think/">查看专题</a><a class="button secondary" href="https://github.com/lozybean/ai-pages/blob/main/topics/think/judgment-brake.html">查看源码</a></div>
+      </article>
+
       <article class="card">
         <div class="card-head"><h3>物流运筹算法核心知识地图</h3><span class="date">发布：2026-05-14</span></div>
         <p class="desc">从物流业务场景出发，系统梳理建模语言、指派、整数规划、网络流、VRP、调度、库存、仿真、鲁棒优化等核心知识模块。</p>
@@ -211,7 +144,7 @@
       </article>
     </section>
 
-    <footer><p>维护说明：新增页面后，请同步更新 <code>index.html</code>。专题页可按「物流运筹 / AI 教育 / 投资报告 / 职业规划 / 产品方案 / 读书笔记」等主题持续归档。</p></footer>
+    <footer><p>维护说明：新增页面后，请同步更新 <code>index.html</code>。专题页可按「思考 / 物流运筹 / AI 教育 / 投资报告 / 职业规划 / 产品方案 / 读书笔记」等主题持续归档。</p></footer>
   </main>
 </body>
 </html>
