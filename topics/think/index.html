@@ -28,10 +28,10 @@
     .nav-link:hover, .nav-link.active { background: var(--accent-soft); color: var(--accent); border-color: rgba(138, 90, 53, 0.14); }
     .wrap { max-width: 1040px; margin: 0 auto; padding: 42px 20px 80px; }
     header { margin-bottom: 38px; }
+    .hero { background: linear-gradient(135deg, #f1e5d7, #fffdf8 58%, #fbf7f0); border: 1px solid var(--line); border-radius: 26px; padding: 38px 36px; box-shadow: 0 14px 38px var(--shadow); }
     .eyebrow { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 16px; padding: 7px 13px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 800; }
     h1 { margin: 0 0 14px; font-size: clamp(34px, 5vw, 54px); line-height: 1.08; letter-spacing: -0.045em; }
     .intro { max-width: 790px; margin: 0; color: var(--muted); font-size: 17px; }
-    .notice { margin-top: 22px; padding: 18px 20px; background: rgba(255, 253, 248, 0.82); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 12px 36px var(--shadow); color: #344054; }
     .section-title { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 34px 0 16px; }
     .section-title h2 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
     .section-title span { color: var(--muted); font-size: 14px; }
@@ -50,8 +50,10 @@
     a.primary { background: var(--accent); color: white; }
     a.secondary { background: transparent; color: var(--accent); border-color: rgba(138, 90, 53, 0.25); }
     footer { margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
-    @media (max-width: 720px) { .nav-inner { padding: 10px 16px; align-items: flex-start; flex-direction: column; gap: 10px; } .nav-links { justify-content: flex-start; } .wrap { padding: 28px 16px 56px; } .card { padding: 22px; } .card-head { display: block; } .date { display: inline-flex; margin-top: 12px; } .section-title { display: block; } .section-title span { display: block; margin-top: 6px; } }
+    @media (max-width: 720px) { .nav-inner { padding: 10px 16px; align-items: flex-start; flex-direction: column; gap: 10px; } .nav-links { justify-content: flex-start; } .wrap { padding: 28px 16px 56px; } .hero, .card { padding: 22px; border-radius: 18px; } .card-head { display: block; } .date { display: inline-flex; margin-top: 12px; } .section-title { display: block; } .section-title span { display: block; margin-top: 6px; } }
   </style>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
 </head>
 <body>
   <nav class="site-nav" aria-label="主导航">
@@ -67,10 +69,11 @@
 
   <main class="wrap">
     <header>
-      <div class="eyebrow">Thinking Notes</div>
-      <h1>思考专题</h1>
-      <p class="intro">围绕判断质量、长期价值、复杂系统、AI 使用和工程实践展开的思考笔记。重点不是给出不可动摇的结论，而是把判断压到可选择、可约束、可校正的行动层。</p>
-      <div class="notice"><strong>专题说明：</strong>本专题用于沉淀偏方法论和思维框架的文章。内容以通用化表达为主，不包含具体个人、组织或敏感业务信息。</div>
+      <section class="hero">
+        <div class="eyebrow">Thinking Notes</div>
+        <h1>思考专题</h1>
+        <p class="intro">围绕判断质量、长期价值、复杂系统、AI 使用和工程实践展开的思考笔记。重点不是给出不可动摇的结论，而是把判断压到可选择、可约束、可校正的行动层。</p>
+      </section>
     </header>
 
     <div class="section-title"><h2>文章列表</h2><span>按发布时间倒序排列</span></div>
