@@ -71,6 +71,18 @@ The shared theme intentionally overrides common legacy classes such as `.hero`, 
 
 When creating a new page, reuse these class names where possible. That lets the shared theme normalize older and newer pages without copying large CSS blocks.
 
+`assets/site-nav.css` also owns common layout and article/list components:
+
+- Page shells: `.wrap`, `.page`, `.container`, `.doc`
+- Headings and article rhythm: `h1`, `h2`, `h3`, `p`, `ul`, `ol`, `li`
+- List-page cards: `.section-title`, `.grid`, `.card-head`, `.desc`, `.meta`, `.actions`, `.button`, `.primary`, `.secondary`
+- Article components: `.toc`, `.quote`, `.notice`, `.box`, `.mini`, `.mini-card`, `.compare`, `.grid-2`, `.grid2`, `.grid3`, `.summary-grid`
+- Data/code blocks: `table`, `th`, `td`, `.formula`, `.code`, `.codebox`, `pre`, `code`
+
+For index and topic-list pages, prefer no page-local `<style>` block at all. Load the shared CSS/JS, then use the shared classes directly.
+
+For article pages, page-local CSS is acceptable only for article-specific diagrams, unusual layouts, or one-off components. Do not duplicate the shared shell, card, button, table, tag, note, quote, or code-block rules unless the article genuinely needs a different structure.
+
 ## Page Style Guidance
 
 Keep page-local styles focused on layout, spacing, typography, and article-specific components. Avoid page-local color systems unless the shared theme cannot express the need.
