@@ -112,9 +112,13 @@ article,
 }
 
 a.primary,
-.num,
-.score {
+.num {
   background: var(--accent) !important;
+}
+
+.score {
+  color: var(--accent);
+  font-weight: 900;
 }
 
 a.secondary,
@@ -153,6 +157,11 @@ tr:nth-child(even) td {
 .example {
   background-color: var(--green-soft) !important;
   border-color: #cbd9c7 !important;
+}
+
+.bad {
+  background-color: #fff7ed !important;
+  border-color: #edcfaa !important;
 }
 
 .sum {
@@ -343,6 +352,7 @@ article,
 .warn,
 .good,
 .example,
+.bad,
 .box,
 .mini,
 .mini-card {
@@ -415,36 +425,138 @@ article,
   background: linear-gradient(180deg, #fff8f5 0, var(--paper) 80px) !important;
 }
 
-.system-judgment-page .grid > .card:nth-child(4n + 1)::before {
-  background: #8a5a35 !important;
+.system-judgment-page .grid > .card:nth-child(6n + 1)::before,
+.knowledge-map-page .grid > .card:nth-child(6n + 1)::before,
+.knowledge-map-page .grid-3 > .card:nth-child(6n + 1)::before {
+  background: #2f6f68 !important;
 }
 
-.system-judgment-page .grid > .card:nth-child(4n + 2)::before {
+.system-judgment-page .grid > .card:nth-child(6n + 2)::before,
+.knowledge-map-page .grid > .card:nth-child(6n + 2)::before,
+.knowledge-map-page .grid-3 > .card:nth-child(6n + 2)::before {
   background: #5f7f55 !important;
 }
 
-.system-judgment-page .grid > .card:nth-child(4n + 3)::before {
+.system-judgment-page .grid > .card:nth-child(6n + 3)::before,
+.knowledge-map-page .grid > .card:nth-child(6n + 3)::before,
+.knowledge-map-page .grid-3 > .card:nth-child(6n + 3)::before {
   background: #9f5a2f !important;
 }
 
-.system-judgment-page .grid > .card:nth-child(4n)::before {
+.system-judgment-page .grid > .card:nth-child(6n + 4)::before,
+.knowledge-map-page .grid > .card:nth-child(6n + 4)::before,
+.knowledge-map-page .grid-3 > .card:nth-child(6n + 4)::before {
   background: #76527f !important;
 }
 
-.system-judgment-page .grid > .card:nth-child(4n + 1) {
-  background: #fffdf8 !important;
+.system-judgment-page .grid > .card:nth-child(6n + 5)::before,
+.knowledge-map-page .grid > .card:nth-child(6n + 5)::before,
+.knowledge-map-page .grid-3 > .card:nth-child(6n + 5)::before {
+  background: #9f4d3f !important;
 }
 
-.system-judgment-page .grid > .card:nth-child(4n + 2) {
+.system-judgment-page .grid > .card:nth-child(6n)::before,
+.knowledge-map-page .grid > .card:nth-child(6n)::before,
+.knowledge-map-page .grid-3 > .card:nth-child(6n)::before {
+  background: #596f86 !important;
+}
+
+.system-judgment-page .grid > .card:nth-child(6n + 1),
+.knowledge-map-page .grid > .card:nth-child(6n + 1),
+.knowledge-map-page .grid-3 > .card:nth-child(6n + 1) {
+  background: #f2faf7 !important;
+}
+
+.system-judgment-page .grid > .card:nth-child(6n + 2),
+.knowledge-map-page .grid > .card:nth-child(6n + 2),
+.knowledge-map-page .grid-3 > .card:nth-child(6n + 2) {
   background: #fbfef9 !important;
 }
 
-.system-judgment-page .grid > .card:nth-child(4n + 3) {
+.system-judgment-page .grid > .card:nth-child(6n + 3),
+.knowledge-map-page .grid > .card:nth-child(6n + 3),
+.knowledge-map-page .grid-3 > .card:nth-child(6n + 3) {
   background: #fffaf3 !important;
 }
 
-.system-judgment-page .grid > .card:nth-child(4n) {
+.system-judgment-page .grid > .card:nth-child(6n + 4),
+.knowledge-map-page .grid > .card:nth-child(6n + 4),
+.knowledge-map-page .grid-3 > .card:nth-child(6n + 4) {
   background: #fcf9fd !important;
+}
+
+.system-judgment-page .grid > .card:nth-child(6n + 5),
+.knowledge-map-page .grid > .card:nth-child(6n + 5),
+.knowledge-map-page .grid-3 > .card:nth-child(6n + 5) {
+  background: #fff8f5 !important;
+}
+
+.system-judgment-page .grid > .card:nth-child(6n),
+.knowledge-map-page .grid > .card:nth-child(6n),
+.knowledge-map-page .grid-3 > .card:nth-child(6n) {
+  background: #f6f8fa !important;
+}
+
+.bipartite-matching-page #scenario .grid3 {
+  margin-top: 18px;
+}
+
+.bipartite-matching-page #scenario .mini:nth-child(6n + 1) {
+  background: #f2faf7 !important;
+  border-top: 4px solid #2f6f68;
+}
+
+.bipartite-matching-page #scenario .mini:nth-child(6n + 2) {
+  background: #fbfef9 !important;
+  border-top: 4px solid #5f7f55;
+}
+
+.bipartite-matching-page #scenario .mini:nth-child(6n + 3) {
+  background: #fff7ed !important;
+  border-top: 4px solid #9f5a2f;
+}
+
+.bipartite-matching-page #scenario .mini:nth-child(6n + 4) {
+  background: #fcf9fd !important;
+  border-top: 4px solid #76527f;
+}
+
+.bipartite-matching-page #scenario .mini:nth-child(6n + 5) {
+  background: #fff8f5 !important;
+  border-top: 4px solid #9f4d3f;
+}
+
+.bipartite-matching-page #scenario .mini:nth-child(6n) {
+  background: #f6f8fa !important;
+  border-top: 4px solid #596f86;
+}
+
+.bipartite-matching-page #scenario .grid3 + .box {
+  margin-top: 22px;
+}
+
+.bipartite-matching-page #hk .step {
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fbf7f0;
+}
+
+.bipartite-matching-page #hk .num {
+  width: auto;
+  height: auto;
+  margin-top: -2px;
+  background: transparent !important;
+  border: 0;
+  color: var(--accent);
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 900;
+  box-shadow: none;
+}
+
+.bipartite-matching-page #compare .box + .box {
+  margin-top: 22px;
 }
 
 .grid > .card:hover {
@@ -820,12 +932,38 @@ th {
   margin-top: 24px;
 }
 
-.toc a {
+.toc a,
+.article-toc a {
   display: block;
   padding: 12px 14px;
   border-radius: 14px;
   text-decoration: none;
   font-weight: 800;
+}
+
+.article-toc {
+  position: fixed;
+  top: 88px;
+  right: max(18px, calc((100vw - 1080px) / 2 - 210px));
+  width: 190px;
+  max-height: calc(100vh - 112px);
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--paper);
+}
+
+.article-toc a {
+  margin: 3px 0;
+  border: 1px solid transparent;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.article-toc a:hover {
+  background: var(--accent-soft);
+  border-color: #d9c6b1;
 }
 
 a.button,
@@ -877,6 +1015,10 @@ footer,
     border-radius: 18px;
   }
 
+  .article-toc {
+    display: none;
+  }
+
   h1 {
     font-size: 32px;
   }
@@ -904,5 +1046,11 @@ footer,
     display: block;
     overflow-x: auto;
     white-space: nowrap;
+  }
+}
+
+@media (max-width: 1320px) {
+  .article-toc {
+    display: none;
   }
 }

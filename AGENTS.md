@@ -83,6 +83,45 @@ For index and topic-list pages, prefer no page-local `<style>` block at all. Loa
 
 For article pages, page-local CSS is acceptable only for article-specific diagrams, unusual layouts, or one-off components. Do not duplicate the shared shell, card, button, table, tag, note, quote, or code-block rules unless the article genuinely needs a different structure.
 
+## Shared Component Usage
+
+The site should feel mostly flat and editorial. Use color, spacing, borders, and typography for hierarchy; avoid adding large shadows, strong gradients, glossy surfaces, hover lift effects, or 3D-looking blocks.
+
+Use `.card` for repeated comparable items. If several adjacent cards represent different categories, preserve semantic color variation with `.tag`, `.tag green`, `.tag orange`, `.tag purple`, or `.tag red`. These classes intentionally add subtle card color cues through the shared stylesheet. Do not flatten them back to one color unless the cards are truly equivalent.
+
+For dense repeated card groups where tag semantics alone are not enough, use the shared six-color rotation pattern from `assets/site-nav.css`. Add one body-level page class, then scope rotation rules to that page class in shared CSS. Current examples include `system-judgment-page`, `knowledge-map-page`, and `bipartite-matching-page`. The rotation palette is intentionally soft and flat:
+
+- teal: `#2f6f68` / `#f2faf7`
+- green: `#5f7f55` / `#fbfef9`
+- orange: `#9f5a2f` / `#fff7ed`
+- purple: `#76527f` / `#fcf9fd`
+- red: `#9f4d3f` / `#fff8f5`
+- blue-gray: `#596f86` / `#f6f8fa`
+
+Do not use brown as the first rotation color for multi-card groups; it blends too easily into the warm paper background. Keep rotation effects flat: light background tint plus a solid top border/color bar is enough.
+
+Use `.quote` or native `blockquote` for key judgments, short conclusions, or memorable claims. Both share the same highlighted quote style. Avoid plain paragraphs for important pull quotes such as "核心结论" takeaways.
+
+Use `.summary`, `.note`, `.warning` / `.warn`, `.good`, and `.example` for callouts with distinct meaning:
+
+- `.summary`: compact conclusion or executive summary
+- `.note`: neutral explanation or learning reminder
+- `.warning` / `.warn`: risk, limitation, or caveat
+- `.good`: positive pattern or recommended direction
+- `.example`: concrete example
+
+Use `.bad` and `.good` together for shallow/deeper understanding, wrong/right, or weak/strong comparison blocks. Both must keep visible solid borders so the compare layout feels consistent.
+
+Use `pre > code` for code snippets and `pre` or `.diagram` for monospace diagrams. Use `.formula` for math/modeling expressions, and `.formula formula-block` when the expression is long and should wrap. Do not style code blocks locally; shared CSS handles inline `code`, `pre`, `pre code`, `.code`, `.codebox`, `.diagram`, and `.formula`.
+
+Use `.map-line` with `.node` and `.arrow` for flow diagrams. Nodes should remain flat: solid soft background, border, no shadows or gradients.
+
+Use `.article-toc` for article-level tables of contents when a page has several major sections. It is managed by shared CSS as a desktop side rail and should auto-hide on narrower screens. Do not wrap it in a `.card`; the side rail is the component.
+
+Use `.score` for compact table judgments such as "高", "中", or "低". Scores should be text emphasis only, without solid background blocks.
+
+When a single article needs page-specific card coloring, prefer adding one body-level page class and writing scoped shared CSS rules, rather than reintroducing a local `<style>` block.
+
 ## Page Style Guidance
 
 Keep page-local styles focused on layout, spacing, typography, and article-specific components. Avoid page-local color systems unless the shared theme cannot express the need.
