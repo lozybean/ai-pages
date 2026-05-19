@@ -43,6 +43,8 @@ When adding nav items, edit only the `links` array in `assets/site-nav.js`. Keep
 
 Avoid page-local back links near the top of articles when the shared nav already provides the same route. They tend to look inconsistent across older pages.
 
+List pages should not show "view source" actions. Keep card actions reader-facing: open the page/article, and optionally jump to the related topic index.
+
 ## Shared Theme
 
 The visual theme lives in `assets/site-nav.css`. Despite the filename, this file is also the shared site theme.
@@ -138,6 +140,8 @@ If a page needs a header area, prefer:
 ```
 
 If a page needs repeated content blocks, prefer `.card`, `.section`, `.mini`, or `.box` instead of inventing new surface styles.
+
+Article pages should read as separate content blocks, not one large document surface with a single background. Prefer a `hero` plus `summary` / `card` sections over wrapping the whole article in one prominent `.doc` container.
 
 ## Adding New Pages
 
