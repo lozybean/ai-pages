@@ -67,9 +67,9 @@
   }
 
   function setupMobileReveal(navElement) {
-    const media = window.matchMedia("(max-width: 680px)");
+    const media = window.matchMedia ? window.matchMedia("(max-width: 680px)") : null;
     let enabled = false;
-    let lastScrollY = window.scrollY;
+    let lastScrollY = getScrollY();
     let lastScrollAt = performance.now();
     let lastTouchY = null;
     let lastTouchAt = 0;
@@ -85,8 +85,8 @@
       hideTimer = window.setTimeout(hide, 1800);
     };
 
-    const hide = () => {
-      if (!enabled || window.scrollY < 4) {
+    const hide = (force = false) => {
+      if (!enabled || (!force && getScrollY() < 4)) {
         return;
       }
       navElement.classList.add("ai-site-nav--mobile-hidden");
@@ -99,7 +99,7 @@
       }
 
       const now = performance.now();
-      const currentY = window.scrollY;
+      const currentY = getScrollY();
       const delta = currentY - lastScrollY;
       const elapsed = Math.max(now - lastScrollAt, 16);
       const speed = Math.abs(delta) / elapsed;
@@ -109,7 +109,7 @@
       } else if (delta < -14 && speed > 0.35) {
         reveal();
       } else if (delta > 5) {
-        hide();
+        hide(true);
       }
 
       lastScrollY = currentY;
@@ -138,7 +138,7 @@
       if (delta > 22 && speed > 0.45) {
         reveal();
       } else if (delta < -8) {
-        hide();
+        hide(true);
       }
 
       lastTouchY = currentTouchY;
@@ -146,25 +146,43 @@
     };
 
     const setEnabled = () => {
-      enabled = media.matches;
+      enabled = isMobileViewport();
       window.clearTimeout(hideTimer);
-      navElement.classList.toggle("ai-site-nav--mobile-hidden", enabled && window.scrollY >= 4);
-      navElement.classList.toggle("ai-site-nav--mobile-visible", enabled && window.scrollY < 4);
+      navElement.classList.toggle("ai-site-nav--mobile-ready", enabled);
+      navElement.classList.toggle("ai-site-nav--mobile-hidden", enabled && getScrollY() >= 4);
+      navElement.classList.toggle("ai-site-nav--mobile-visible", enabled && getScrollY() < 4);
       if (!enabled) {
-        navElement.classList.remove("ai-site-nav--mobile-hidden", "ai-site-nav--mobile-visible");
+        navElement.classList.remove("ai-site-nav--mobile-hidden", "ai-site-nav--mobile-visible", "ai-site-nav--mobile-ready");
       }
-      lastScrollY = window.scrollY;
+      lastScrollY = getScrollY();
       lastScrollAt = performance.now();
     };
 
     window.addEventListener("scroll", onScroll, { passive: true });
+    document.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("touchstart", onTouchStart, { passive: true });
     window.addEventListener("touchmove", onTouchMove, { passive: true });
-    if (media.addEventListener) {
+    window.addEventListener("resize", setEnabled, { passive: true });
+    window.addEventListener("orientationchange", setEnabled, { passive: true });
+    if (media && media.addEventListener) {
       media.addEventListener("change", setEnabled);
-    } else if (media.addListener) {
+    } else if (media && media.addListener) {
       media.addListener(setEnabled);
     }
     setEnabled();
+  }
+
+  function getScrollY() {
+    return window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+  }
+
+  function isMobileViewport() {
+    const viewportWidth = Math.min(
+      window.innerWidth || Infinity,
+      document.documentElement.clientWidth || Infinity,
+      window.visualViewport ? window.visualViewport.width : Infinity
+    );
+    const screenWidth = Math.min(window.screen ? window.screen.width : Infinity, window.screen ? window.screen.height : Infinity);
+    return viewportWidth <= 680 || screenWidth <= 680;
   }
 })();

@@ -291,25 +291,38 @@ pre code {
   color: var(--accent);
 }
 
+.ai-site-nav.ai-site-nav--mobile-ready {
+  position: fixed;
+  right: 0;
+  left: 0;
+  transform: translateY(-112%);
+  transition: transform .24s ease, box-shadow .24s ease;
+  will-change: transform;
+}
+
+.ai-site-nav.ai-site-nav--mobile-ready.ai-site-nav--mobile-visible {
+  transform: translateY(0);
+}
+
+.ai-site-nav.ai-site-nav--mobile-ready.ai-site-nav--mobile-hidden {
+  transform: translateY(-112%);
+  box-shadow: none;
+}
+
+.ai-site-nav.ai-site-nav--mobile-ready .ai-site-nav__inner {
+  width: calc(100% - 28px);
+  min-height: 0;
+  padding: 10px 0;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.ai-site-nav.ai-site-nav--mobile-ready .ai-site-nav__links {
+  justify-content: flex-start;
+}
+
 @media (max-width: 680px) {
-  .ai-site-nav {
-    position: fixed;
-    right: 0;
-    left: 0;
-    transform: translateY(-112%);
-    transition: transform .24s ease, box-shadow .24s ease;
-    will-change: transform;
-  }
-
-  .ai-site-nav.ai-site-nav--mobile-visible {
-    transform: translateY(0);
-  }
-
-  .ai-site-nav.ai-site-nav--mobile-hidden {
-    transform: translateY(-112%);
-    box-shadow: none;
-  }
-
   .ai-site-nav__inner {
     width: calc(100% - 28px);
     min-height: 0;
