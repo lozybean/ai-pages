@@ -68,29 +68,39 @@
 
   function setupMobileReveal(navElement) {
     const media = window.matchMedia ? window.matchMedia("(max-width: 680px)") : null;
+    const spacer = document.createElement("div");
+    spacer.className = "ai-site-nav-spacer";
+    spacer.setAttribute("aria-hidden", "true");
     let enabled = false;
     let lastScrollY = getScrollY();
     let lastScrollAt = performance.now();
     let lastTouchY = null;
     let lastTouchAt = 0;
     let hideTimer = 0;
+    let revealLockedUntil = 0;
 
-    const reveal = () => {
+    const syncSpacer = () => {
+      spacer.style.height = enabled ? `${Math.ceil(navElement.getBoundingClientRect().height)}px` : "0px";
+    };
+
+    const scheduleHide = () => {
+      window.clearTimeout(hideTimer);
+      hideTimer = window.setTimeout(() => hide(), 3200);
+    };
+
+    const reveal = (lockMs = 900) => {
       if (!enabled) {
-        return;
-      }
-      if (getScrollY() < 80) {
-        hide(true);
         return;
       }
       navElement.classList.add("ai-site-nav--mobile-visible");
       navElement.classList.remove("ai-site-nav--mobile-hidden");
-      window.clearTimeout(hideTimer);
-      hideTimer = window.setTimeout(hide, 1800);
+      revealLockedUntil = performance.now() + lockMs;
+      syncSpacer();
+      scheduleHide();
     };
 
     const hide = (force = false) => {
-      if (!enabled || (!force && getScrollY() < 4)) {
+      if (!enabled || (!force && (getScrollY() < 36 || performance.now() < revealLockedUntil))) {
         return;
       }
       navElement.classList.add("ai-site-nav--mobile-hidden");
@@ -108,11 +118,11 @@
       const elapsed = Math.max(now - lastScrollAt, 16);
       const speed = Math.abs(delta) / elapsed;
 
-      if (currentY < 4) {
-        hide(true);
+      if (currentY < 36) {
+        reveal(0);
       } else if (delta < -14 && speed > 0.35) {
         reveal();
-      } else if (delta > 5) {
+      } else if (delta > 18 && speed > 0.18 && now >= revealLockedUntil) {
         hide(true);
       }
 
@@ -141,7 +151,7 @@
 
       if (delta > 22 && speed > 0.45) {
         reveal();
-      } else if (delta < -8) {
+      } else if (delta < -22 && now >= revealLockedUntil) {
         hide(true);
       }
 
@@ -153,20 +163,30 @@
       enabled = isMobileViewport();
       window.clearTimeout(hideTimer);
       navElement.classList.toggle("ai-site-nav--mobile-ready", enabled);
-      navElement.classList.toggle("ai-site-nav--mobile-hidden", enabled);
-      navElement.classList.remove("ai-site-nav--mobile-visible");
+      navElement.classList.toggle("ai-site-nav--mobile-visible", enabled);
+      navElement.classList.remove("ai-site-nav--mobile-hidden");
+      if (enabled && !spacer.isConnected) {
+        navElement.after(spacer);
+      }
       if (!enabled) {
         navElement.classList.remove("ai-site-nav--mobile-hidden", "ai-site-nav--mobile-visible", "ai-site-nav--mobile-ready");
+        spacer.remove();
       }
+      syncSpacer();
       lastScrollY = getScrollY();
       lastScrollAt = performance.now();
     };
 
+    navElement.addEventListener("pointerenter", () => window.clearTimeout(hideTimer));
+    navElement.addEventListener("pointerleave", scheduleHide);
+    navElement.addEventListener("focusin", () => window.clearTimeout(hideTimer));
+    navElement.addEventListener("focusout", scheduleHide);
     window.addEventListener("scroll", onScroll, { passive: true });
     document.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("touchstart", onTouchStart, { passive: true });
     window.addEventListener("touchmove", onTouchMove, { passive: true });
     window.addEventListener("resize", setEnabled, { passive: true });
+    window.addEventListener("resize", syncSpacer, { passive: true });
     window.addEventListener("orientationchange", setEnabled, { passive: true });
     if (media && media.addEventListener) {
       media.addEventListener("change", setEnabled);

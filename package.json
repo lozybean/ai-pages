@@ -5,5 +5,8 @@
   "type": "module",
   "scripts": {
     "preview": "node server.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0"
   }
 }

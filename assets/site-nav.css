@@ -293,11 +293,20 @@ pre code {
 
 .ai-site-nav.ai-site-nav--mobile-ready {
   position: fixed;
+  top: 0;
   right: 0;
   left: 0;
   transform: translateY(-112%);
   transition: transform .24s ease, box-shadow .24s ease;
   will-change: transform;
+}
+
+.ai-site-nav-spacer {
+  display: none;
+}
+
+.ai-site-nav.ai-site-nav--mobile-ready + .ai-site-nav-spacer {
+  display: block;
 }
 
 .ai-site-nav.ai-site-nav--mobile-ready.ai-site-nav--mobile-visible {
