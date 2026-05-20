@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KM 算法：顶标、相等子图与最大权二分图匹配</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div class="eyebrow">物流运筹 · 加权二分图匹配 · 指派问题</div>
+      <h1>KM 算法：顶标、相等子图与最大权二分图匹配</h1>
+      <p class="intro">KM 算法用于求解最大权完美匹配。它可以理解为：在普通二分图匹配的增广逻辑之上，增加一套“顶标 / 价格体系”，逐步构造相等子图；当相等子图中存在完美匹配时，这个匹配就是最大权匹配。</p>
+      <div class="meta">
+        <span class="tag">KM 算法</span>
+        <span class="tag">加权二分图匹配</span>
+        <span class="tag">最大权完美匹配</span>
+        <span class="tag">顶标</span>
+        <span class="tag">相等子图</span>
+        <span class="tag">增广路径</span>
+      </div>
+    </header>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#problem">一、问题形式</a>
+      <a href="#labels">二、顶标与相等边</a>
+      <a href="#example">三、完整推导</a>
+      <a href="#matching">四、匹配如何确定</a>
+      <a href="#why">五、为什么最优</a>
+      <a href="#hungarian">六、和匈牙利算法的关系</a>
+      <a href="#flow">七、算法流程</a>
+    </nav>
+
+    <section id="problem" class="card">
+      <h2>1. 问题形式：最大权完美匹配</h2>
+      <p class="lead">给定左右两侧各 n 个节点，任意左侧节点和右侧节点之间有一个权重。目标是从中选出 n 条边，使每个左点和每个右点都刚好出现一次，并让总权重最大。</p>
+      <div class="formula formula-block">输入：weight[i][j] = 左侧点 i 匹配右侧点 j 的收益
+约束：每个左点匹配一个右点；每个右点也只能被一个左点匹配
+目标：maximize sum(weight[i][match[i]])</div>
+      <p>这类问题也可以称为指派问题的最大收益版本。若问题是最小成本，可以通过取负数或用常数转换成最大收益形式。</p>
+    </section>
+
+    <section id="labels" class="card">
+      <h2>2. 顶标、相等边与相等子图</h2>
+      <p>KM 算法会给左右两侧的点各设置一个数：</p>
+      <div class="formula formula-block">左侧顶标：lx[i]
+右侧顶标：ly[j]</div>
+      <p>它始终维护一个条件：</p>
+      <div class="formula formula-block">lx[i] + ly[j] &gt;= weight[i][j]</div>
+      <p>如果一条边满足等号：</p>
+      <div class="formula formula-block">lx[i] + ly[j] == weight[i][j]</div>
+      <p>这条边就是<strong>相等边</strong>。所有相等边构成的二分图，就是<strong>相等子图</strong>。</p>
+      <div class="note">
+        <strong>直觉：</strong>顶标是一套算法里的“估价体系”。相等边表示在当前估价体系下“刚好贴边”的候选边。KM 只在这些候选边里尝试寻找完美匹配；如果找不到，就调整顶标，让更多边进入相等子图。
+      </div>
+    </section>
+
+    <section id="example" class="card">
+      <h2>3. 3×3 示例完整推导</h2>
+      <p>使用一个最大权匹配例子：</p>
+      <table>
+        <thead><tr><th>人 / 任务</th><th>T1</th><th>T2</th><th>T3</th></tr></thead>
+        <tbody>
+          <tr><td>A</td><td>3</td><td>4</td><td>6</td></tr>
+          <tr><td>B</td><td>2</td><td>3</td><td>5</td></tr>
+          <tr><td>C</td><td>1</td><td>6</td><td>4</td></tr>
+        </tbody>
+      </table>
+
+      <h3>3.1 初始化顶标</h3>
+      <p>通常初始化为：</p>
+      <div class="formula formula-block">lx[i] = 第 i 行最大权重
+ly[j] = 0</div>
+      <p>所以：</p>
+      <div class="formula formula-block">lx[A] = 6, lx[B] = 5, lx[C] = 6
+ly[T1] = 0, ly[T2] = 0, ly[T3] = 0</div>
+
+      <h3>3.2 初始相等边</h3>
+      <p>检查哪些边满足 <code>lx[i] + ly[j] == weight[i][j]</code>：</p>
+      <table>
+        <thead><tr><th>节点</th><th>相等边</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>A</td><td>A - T3</td><td>6 + 0 = 6</td></tr>
+          <tr><td>B</td><td>B - T3</td><td>5 + 0 = 5</td></tr>
+          <tr><td>C</td><td>C - T2</td><td>6 + 0 = 6</td></tr>
+        </tbody>
+      </table>
+      <div class="formula formula-block">初始相等子图：
+A - T3
+B - T3
+C - T2</div>
+      <p>这个相等子图中找不到完美匹配，因为 A 和 B 都只能连接 T3，冲突无法化解。</p>
+
+      <h3>3.3 第一次顶标调整</h3>
+      <p>假设当前匹配中 A-T3、C-T2 已经存在，B 还未匹配。B 想要 T3，但 T3 被 A 占用，于是搜索树为：</p>
+      <div class="formula formula-block">S = {B, A}
+T = {T3}</div>
+      <p>计算从 S 中左点到 T 外右点的 slack：</p>
+      <div class="formula formula-block">slack[i][j] = lx[i] + ly[j] - weight[i][j]
+
+B-T1: 5 + 0 - 2 = 3
+B-T2: 5 + 0 - 3 = 2
+A-T1: 6 + 0 - 3 = 3
+A-T2: 6 + 0 - 4 = 2
+
+delta = min(slack) = 2</div>
+      <p>调整规则：</p>
+      <div class="formula formula-block">S 中左点：lx 减 delta
+T 中右点：ly 加 delta
+其他点不变</div>
+      <p>调整后：</p>
+      <div class="formula formula-block">lx[A] = 4, lx[B] = 3, lx[C] = 6
+ly[T1] = 0, ly[T2] = 0, ly[T3] = 2</div>
+      <p>新的相等边：</p>
+      <div class="formula formula-block">A - T2, A - T3
+B - T2, B - T3
+C - T2</div>
+      <p>此时仍然找不到完美匹配，因为所有相等边只连到了 T2、T3，没有连到 T1。</p>
+
+      <h3>3.4 第二次顶标调整</h3>
+      <p>继续从未匹配点 B 出发。B 可以连 T2、T3，但 T2 被 C 占，T3 被 A 占，所以搜索树扩展为：</p>
+      <div class="formula formula-block">S = {A, B, C}
+T = {T2, T3}</div>
+      <p>不在 T 中的右点只有 T1。计算：</p>
+      <div class="formula formula-block">A-T1: 4 + 0 - 3 = 1
+B-T1: 3 + 0 - 2 = 1
+C-T1: 6 + 0 - 1 = 5
+
+delta = 1</div>
+      <p>调整后：</p>
+      <div class="formula formula-block">lx[A] = 3, lx[B] = 2, lx[C] = 5
+ly[T1] = 0, ly[T2] = 1, ly[T3] = 3</div>
+      <p>新的相等子图变成：</p>
+      <div class="formula formula-block">A - T1, T2, T3
+B - T1, T2, T3
+C - T2</div>
+      <div class="good"><strong>现在可以找到完美匹配。</strong>例如：C-T2、A-T3、B-T1，总权重为 6 + 6 + 2 = 14。</div>
+    </section>
+
+    <section id="matching" class="card">
+      <h2>4. 相等子图里的匹配如何确定？</h2>
+      <p>第二次调整后，相等子图是：</p>
+      <div class="formula formula-block">A: T1, T2, T3
+B: T1, T2, T3
+C: T2</div>
+      <p>这里 <strong>C-T2</strong> 看起来像是“确定”的，因为 C 只有 T2 一条相等边。如果最终要形成覆盖全部节点的完美匹配，C 必须匹配 T2。</p>
+      <p>一旦 C-T2 被占用，剩下的是：</p>
+      <div class="formula formula-block">左侧：A, B
+右侧：T1, T3</div>
+      <p>A 和 B 都可以连 T1、T3，所以可能得到：</p>
+      <div class="formula formula-block">方案一：A-T3, B-T1, C-T2，总权重 = 6 + 2 + 6 = 14
+方案二：A-T1, B-T3, C-T2，总权重 = 3 + 5 + 6 = 14</div>
+      <div class="warn"><strong>关键澄清：</strong>KM 不是直接“看出来”A-T3、B-T1。真正做法是在相等子图上重新执行普通二分图匹配 / 增广路径搜索。只要找到覆盖所有左右节点的 n 条不冲突边，就是完美匹配。</div>
+
+      <h3>4.1 不是任意不冲突匹配都叫完美匹配</h3>
+      <p>要特别区分：</p>
+      <div class="summary-grid">
+        <div class="mini"><h3>匹配</h3><p>一组不冲突的边。每个点最多被一条边使用。</p></div>
+        <div class="mini"><h3>最大匹配</h3><p>在当前图中，边数最多的一组不冲突边。</p></div>
+        <div class="mini"><h3>完美匹配</h3><p>如果左右各 n 个点，匹配边数 = n，并且所有点都被覆盖。</p></div>
+        <div class="mini"><h3>KM 的终止条件</h3><p>相等子图中的最大匹配数 = n，也就是找到完美匹配。</p></div>
+      </div>
+      <p>例如相等子图只有：</p>
+      <div class="formula formula-block">A - T1
+B - T1
+C - T2</div>
+      <p>可以找到不冲突匹配 A-T1、C-T2，但只有 2 条边。若左右各 3 个点，这不是完美匹配，KM 还不能结束。</p>
+
+      <h3>4.2 节点更多时怎么计算？</h3>
+      <p>节点更多时，不靠肉眼判断，而是在相等子图上跑普通二分图最大匹配：</p>
+      <div class="formula formula-block">如果最大匹配数 == n：
+    找到完美匹配，KM 结束
+否则：
+    相等边还不够，继续调整顶标</div>
+      <p>也就是说，KM 的内部仍然在使用你已经熟悉的“增广路径 / 让路”逻辑，只是它使用的边不是原始全部边，而是当前顶标体系下的相等边。</p>
+    </section>
+
+    <section id="why" class="card">
+      <h2>5. 为什么相等子图中的完美匹配一定最优？</h2>
+      <p>KM 维护：</p>
+      <div class="formula formula-block">lx[i] + ly[j] &gt;= weight[i][j]</div>
+      <p>对于任意一个完美匹配，因为每个左点和每个右点都刚好被使用一次，所以：</p>
+      <div class="formula formula-block">任意匹配总权重
+&lt;= sum(lx) + sum(ly)</div>
+      <p>这意味着 <code>sum(lx) + sum(ly)</code> 是当前能够证明出来的一个总收益上界。</p>
+      <p>如果某个完美匹配完全由相等边组成，那么每条匹配边都满足：</p>
+      <div class="formula formula-block">weight[i][j] = lx[i] + ly[j]</div>
+      <p>于是这组匹配的总权重正好等于：</p>
+      <div class="formula formula-block">sum(lx) + sum(ly)</div>
+      <div class="good"><strong>它达到了理论上界，因此一定是最大权完美匹配。</strong></div>
+    </section>
+
+    <section id="hungarian" class="card">
+      <h2>6. KM 算法与行列变换版匈牙利算法的关系</h2>
+      <p>如果你已经理解了行列变换版匈牙利算法，会发现它和 KM 算法有很强的相似性。两者都不是直接贪心选边，而是先维护一套“变换后的评价体系”，再从当前看起来最有希望的边里寻找完整匹配。</p>
+      <div class="quote">行列变换版匈牙利算法是在矩阵里制造 0；KM 算法是在二分图里制造相等边。</div>
+      <p>两种讲法的入口不同：行列变换版通常从最小成本矩阵出发，KM 通常从最大权二分图出发。但它们背后的共同思想，都是通过调整对偶变量，把“可能属于最优解的边”逐渐暴露出来。</p>
+      <table>
+        <thead>
+          <tr><th>行列变换版匈牙利算法</th><th>KM 算法</th><th>直觉对应</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>成本矩阵</td><td>权重矩阵</td><td>都是描述左侧对象和右侧对象之间的匹配价值</td></tr>
+          <tr><td>行减、列减</td><td>调整左右顶标</td><td>都在改变评价体系，而不是改变原问题的最优结构</td></tr>
+          <tr><td>0 元素</td><td>相等边</td><td>当前评价体系下最值得尝试的候选边</td></tr>
+          <tr><td>由 0 构成的可选图</td><td>相等子图</td><td>算法只在这些候选边中寻找完整匹配</td></tr>
+          <tr><td>从 0 中选不冲突指派</td><td>在相等子图中找完美匹配</td><td>本质上都是普通二分图匹配问题</td></tr>
+          <tr><td>0 不够时继续调整矩阵</td><td>无法增广时用 slack 调整顶标</td><td>候选边不足时，继续制造新的候选边</td></tr>
+        </tbody>
+      </table>
+      <p>所以可以把 KM 看成行列变换思想在加权二分图上的一种图论表达：矩阵算法用“0”提示哪些边可选，KM 用“相等边”提示哪些边可选；矩阵算法通过覆盖 0 后调整矩阵制造新 0，KM 通过最小 slack 调整顶标制造新相等边。</p>
+      <div class="note"><strong>差异也要注意：</strong>行列变换版更适合教学最小成本指派，矩阵操作直观；KM 更适合从最大权匹配、对偶上界和增广路径的角度理解，也更容易和图算法实现衔接。</div>
+    </section>
+
+    <section id="flow" class="card">
+      <h2>7. KM 算法流程</h2>
+      <ol class="checklist flow-checklist">
+        <li><strong>初始化顶标。</strong>通常令每个左点顶标等于该行最大权重，右点顶标为 0。</li>
+        <li><strong>构造相等子图。</strong>只保留满足 lx[i] + ly[j] == weight[i][j] 的边。</li>
+        <li><strong>在相等子图中找匹配。</strong>使用普通二分图匹配的增广路径逻辑。</li>
+        <li><strong>如果找到 n 条不冲突边。</strong>说明相等子图中存在完美匹配，算法结束。</li>
+        <li><strong>如果找不到。</strong>根据当前搜索树计算最小 slack，也就是 delta。</li>
+        <li><strong>调整顶标。</strong>S 中左点 lx 减 delta，T 中右点 ly 加 delta，其他不变。</li>
+        <li><strong>产生新相等边。</strong>继续在扩大的相等子图中寻找增广路径，直到形成完美匹配。</li>
+      </ol>
+      <h3>一句话总结</h3>
+      <div class="note"><strong>KM 算法 = 普通二分图匹配 + 顶标调整。</strong><br>普通匹配负责在当前候选边里找增广路径；顶标调整负责在候选边不够时，制造新的相等边。</div>
+    </section>
+
+    <footer class="footer">发布：2026-05-20｜物流运筹学习专题</footer>
+  </main>
+</body>
+</html>

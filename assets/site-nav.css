@@ -876,7 +876,7 @@ blockquote {
 }
 
 .formula-block {
-  white-space: normal;
+  white-space: pre-wrap;
 }
 
 .code,
@@ -941,6 +941,15 @@ th {
 .checklist {
   border: 1px solid var(--line);
   background: #fbf7f0;
+}
+
+.flow-checklist {
+  padding-left: 42px;
+}
+
+.flow-checklist li {
+  padding-left: 4px;
+  margin: 8px 0;
 }
 
 .checklist li::marker {
