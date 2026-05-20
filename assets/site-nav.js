@@ -79,6 +79,10 @@
       if (!enabled) {
         return;
       }
+      if (getScrollY() < 80) {
+        hide(true);
+        return;
+      }
       navElement.classList.add("ai-site-nav--mobile-visible");
       navElement.classList.remove("ai-site-nav--mobile-hidden");
       window.clearTimeout(hideTimer);
@@ -105,7 +109,7 @@
       const speed = Math.abs(delta) / elapsed;
 
       if (currentY < 4) {
-        reveal();
+        hide(true);
       } else if (delta < -14 && speed > 0.35) {
         reveal();
       } else if (delta > 5) {
@@ -149,8 +153,8 @@
       enabled = isMobileViewport();
       window.clearTimeout(hideTimer);
       navElement.classList.toggle("ai-site-nav--mobile-ready", enabled);
-      navElement.classList.toggle("ai-site-nav--mobile-hidden", enabled && getScrollY() >= 4);
-      navElement.classList.toggle("ai-site-nav--mobile-visible", enabled && getScrollY() < 4);
+      navElement.classList.toggle("ai-site-nav--mobile-hidden", enabled);
+      navElement.classList.remove("ai-site-nav--mobile-visible");
       if (!enabled) {
         navElement.classList.remove("ai-site-nav--mobile-hidden", "ai-site-nav--mobile-visible", "ai-site-nav--mobile-ready");
       }
