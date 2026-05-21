@@ -131,6 +131,8 @@ Do not combine `.article-toc` with the legacy `.toc` class. `.toc` creates an in
 
 Place `.article-toc` immediately after the hero/header and before summary, note, intro, or other post-hero callouts. For pages containing `.article-toc`, shared CSS turns the main container into a two-column article grid: left column for hero/content, right column for the TOC. `.article-toc` is placed in the first grid row so its top aligns with the hero top, then sticks while scrolling using `--article-toc-sticky-top`. Adjust the shared grid or sticky variable only when the global article TOC position needs to move; do not patch individual article pages with page-local TOC offsets.
 
+On narrower viewports where the side rail is hidden, `assets/site-nav.js` clones `.article-toc` links into a mobile TOC drawer. Keep one source of truth in the article's `.article-toc`; do not hand-write separate mobile directory markup. The mobile interaction is a floating "目录" button plus a bottom drawer, controlled by the shared `.article-toc-mobile-*` classes in `assets/site-nav.css`.
+
 Use `.score` for compact table judgments such as "高", "中", or "低". Scores should be text emphasis only, without solid background blocks.
 
 When a single article needs page-specific card coloring, prefer adding one body-level page class and writing scoped shared CSS rules, rather than reintroducing a local `<style>` block.

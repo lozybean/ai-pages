@@ -32,6 +32,7 @@
   }
 
   setupMobileReveal(nav);
+  setupMobileArticleToc();
 
   function renderLink(link) {
     const href = urlFor(link.path);
@@ -208,5 +209,74 @@
     );
     const screenWidth = Math.min(window.screen ? window.screen.width : Infinity, window.screen ? window.screen.height : Infinity);
     return viewportWidth <= 680 || screenWidth <= 680;
+  }
+
+  function setupMobileArticleToc() {
+    const articleToc = document.querySelector(".article-toc");
+    if (!articleToc || !articleToc.querySelector("a")) {
+      return;
+    }
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "article-toc-mobile-button";
+    button.setAttribute("aria-controls", "article-toc-mobile-drawer");
+    button.setAttribute("aria-expanded", "false");
+    button.textContent = "目录";
+
+    const overlay = document.createElement("div");
+    overlay.className = "article-toc-mobile-overlay";
+    overlay.setAttribute("aria-hidden", "true");
+
+    const drawer = document.createElement("aside");
+    drawer.id = "article-toc-mobile-drawer";
+    drawer.className = "article-toc-mobile-drawer";
+    drawer.setAttribute("aria-label", "文章目录");
+    drawer.setAttribute("aria-hidden", "true");
+    drawer.innerHTML = `
+      <div class="article-toc-mobile-drawer__head">
+        <strong>文章目录</strong>
+        <button type="button" class="article-toc-mobile-close" aria-label="关闭目录">关闭</button>
+      </div>
+      <div class="article-toc-mobile-drawer__links"></div>
+    `;
+
+    const linksContainer = drawer.querySelector(".article-toc-mobile-drawer__links");
+    [...articleToc.querySelectorAll("a")].forEach((link) => {
+      const clone = link.cloneNode(true);
+      clone.addEventListener("click", closeDrawer);
+      linksContainer.appendChild(clone);
+    });
+
+    document.body.append(overlay, drawer, button);
+
+    button.addEventListener("click", () => {
+      if (document.body.classList.contains("article-toc-mobile-open")) {
+        closeDrawer();
+      } else {
+        openDrawer();
+      }
+    });
+    overlay.addEventListener("click", closeDrawer);
+    drawer.querySelector(".article-toc-mobile-close").addEventListener("click", closeDrawer);
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeDrawer();
+      }
+    });
+
+    function openDrawer() {
+      document.body.classList.add("article-toc-mobile-open");
+      button.setAttribute("aria-expanded", "true");
+      drawer.setAttribute("aria-hidden", "false");
+      overlay.setAttribute("aria-hidden", "false");
+    }
+
+    function closeDrawer() {
+      document.body.classList.remove("article-toc-mobile-open");
+      button.setAttribute("aria-expanded", "false");
+      drawer.setAttribute("aria-hidden", "true");
+      overlay.setAttribute("aria-hidden", "true");
+    }
   }
 })();
