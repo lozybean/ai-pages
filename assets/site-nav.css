@@ -376,8 +376,28 @@ a:hover {
   padding: 42px 0 80px;
 }
 
+.wrap:has(.article-toc),
+.page:has(.article-toc),
+.container:has(.article-toc) {
+  display: grid;
+  grid-template-columns: minmax(0, 1080px) 190px;
+  column-gap: 24px;
+  align-items: start;
+  width: min(1294px, calc(100% - 40px));
+}
+
+.wrap:has(.article-toc) > :not(.article-toc),
+.page:has(.article-toc) > :not(.article-toc),
+.container:has(.article-toc) > :not(.article-toc) {
+  grid-column: 1;
+}
+
 main > header {
   margin-bottom: 38px;
+}
+
+main > header:has(.hero) {
+  margin-bottom: 0;
 }
 
 .doc,
@@ -423,6 +443,15 @@ article,
   border-radius: 22px;
   box-shadow: 0 12px 36px var(--shadow);
   transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+}
+
+.wrap > .hero,
+.page > .hero,
+.container > .hero {
+  margin-top: 0;
+  margin-bottom: 28px;
+  padding: 38px 36px;
+  border-radius: 26px;
 }
 
 .grid > .card::before {
@@ -692,6 +721,19 @@ li {
 .lead {
   max-width: 860px;
   font-size: 18px;
+}
+
+.hero .intro,
+.hero .subtitle {
+  margin: 18px 0 0;
+  max-width: 920px;
+  font-size: clamp(18px, 1.6vw, 24px);
+  line-height: 1.75;
+}
+
+.hero .meta,
+.hero .tags {
+  margin-top: 24px;
 }
 
 .meta,
@@ -991,12 +1033,17 @@ th {
 }
 
 .article-toc {
-  position: fixed;
-  top: 88px;
-  right: max(18px, calc((100vw - 1080px) / 2 - 210px));
+  --article-toc-sticky-top: 96px;
+  display: block;
+  grid-column: 2;
+  grid-row: 1 / span 100;
+  position: sticky;
+  top: var(--article-toc-sticky-top);
   width: 190px;
-  max-height: calc(100vh - 112px);
+  max-height: calc(100vh - var(--article-toc-sticky-top) - 32px);
   overflow: auto;
+  box-sizing: border-box;
+  margin: 0;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 18px;

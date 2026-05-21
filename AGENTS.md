@@ -118,7 +118,18 @@ Use `pre > code` for code snippets and `pre` or `.diagram` for monospace diagram
 
 Use `.map-line` with `.node` and `.arrow` for flow diagrams. Nodes should remain flat: solid soft background, border, no shadows or gradients.
 
-Use `.article-toc` for article-level tables of contents when a page has several major sections. It is managed by shared CSS as a desktop side rail and should auto-hide on narrower screens. Do not wrap it in a `.card`; the side rail is the component.
+Use `.article-toc` for article-level tables of contents when a page has several major sections. Match the pattern used by `topics/logistics-or/order-fulfillment-assignment-practice.html`:
+
+```html
+<nav class="article-toc" aria-label="文章目录">
+  <a href="#sec1">一、...</a>
+  <a href="#sec2">二、...</a>
+</nav>
+```
+
+Do not combine `.article-toc` with the legacy `.toc` class. `.toc` creates an in-flow grid, while `.article-toc` is managed by shared CSS as a desktop side rail and auto-hides on narrower screens. Do not wrap it in a `.card`; the side rail is the component.
+
+Place `.article-toc` immediately after the hero/header and before summary, note, intro, or other post-hero callouts. For pages containing `.article-toc`, shared CSS turns the main container into a two-column article grid: left column for hero/content, right column for the TOC. `.article-toc` is placed in the first grid row so its top aligns with the hero top, then sticks while scrolling using `--article-toc-sticky-top`. Adjust the shared grid or sticky variable only when the global article TOC position needs to move; do not patch individual article pages with page-local TOC offsets.
 
 Use `.score` for compact table judgments such as "高", "中", or "低". Scores should be text emphasis only, without solid background blocks.
 
@@ -129,6 +140,23 @@ When a single article needs page-specific card coloring, prefer adding one body-
 Keep page-local styles focused on layout, spacing, typography, and article-specific components. Avoid page-local color systems unless the shared theme cannot express the need.
 
 Do not add strong blue, purple, or multicolor gradient page headers. List pages and article pages should sit on the same warm background so navigation between pages does not produce a visible color flash.
+
+Article hero areas should use the shared `.hero` component as the first article block. The canonical article hero shape is:
+
+```html
+<section class="hero">
+  <div class="eyebrow">...</div>
+  <h1>...</h1>
+  <p class="intro">...</p>
+  <div class="meta"><span class="tag">...</span></div>
+</section>
+```
+
+Use `.intro` for new article hero descriptions; older `.subtitle` is still normalized by shared CSS but should not be introduced in new pages. Use `.meta` for hero tags and dates; older `.tags` is normalized but new pages should prefer `.meta`. Avoid page-local hero spacing, title sizing, tag layout, or color rules.
+
+If a page wraps the hero in `main > header`, shared CSS removes the wrapper's extra bottom margin so the hero spacing matches pages that use `.hero` directly. Do not compensate with page-local margins.
+
+Some older article pages use `main.page > section.hero`; shared CSS explicitly normalizes direct-child heroes so they do not inherit the generic `.page > section` card margin/padding. Do not add page-local top margins or padding to fix hero alignment; update the shared direct-child hero rule in `assets/site-nav.css` if all article hero spacing needs adjustment.
 
 If a page needs a header area, prefer:
 
