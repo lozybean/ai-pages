@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SPFA 最短路增广：从残量网络理解最小成本最大流</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <div class="eyebrow">物流运筹 · 最小费用流 · SPFA</div>
+      <h1>SPFA 最短路增广：从残量网络理解最小成本最大流</h1>
+      <p class="intro">最小成本最大流可以先从“每次找当前最便宜的增广路径”学起。SPFA 版本不一定是最快的工程实现，但它把容量、费用、残量网络、反向边和重排历史流量这些核心概念暴露得最清楚。</p>
+      <div class="meta"><span class="tag">最小成本最大流</span><span class="tag">SPFA</span><span class="tag">最短路增广</span><span class="tag">残量网络</span><span class="tag">反向边</span></div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#position">一、从哪里开始理解</a>
+      <a href="#concepts">二、核心概念</a>
+      <a href="#spfa">三、SPFA 在做什么</a>
+      <a href="#process">四、最短路增广流程</a>
+      <a href="#model">五、示例建模</a>
+      <a href="#derive">六、逐轮推导</a>
+      <a href="#why">七、为什么能得到低成本最大流</a>
+      <a href="#practice">八、实现要点</a>
+    </nav>
+
+    <section id="position" class="card">
+      <h2>一、从哪里开始理解</h2>
+      <p>最大流只关心“最多能送多少流量”。最小成本最大流多问一步：在最大流量已经确定的前提下，哪一种流量安排的总费用最低。</p>
+      <div class="formula formula-block">最大流：maximize flow
+最小成本最大流：先 maximize flow，再 minimize sum(flow(e) * cost(e))</div>
+      <blockquote>SPFA 最短路增广的入口直觉是：每增加一批流量，都选择当前残量网络里单位边际成本最低的 <code>s -> t</code> 路径。</blockquote>
+      <p>这里有两个重要限定。第一，最短路不是边数最少，而是路径费用和最小。第二，路径不是在原始图里找，而是在残量网络里找；残量网络中会出现负费用反向边，所以入门实现常用能处理负边权的 SPFA。</p>
+      <div class="grid2">
+        <div class="box note">
+          <span class="label">为什么适合入门</span>
+          <p>SPFA 代码结构接近普通最短路，容易看到每轮如何选路径、算瓶颈、更新正反边。</p>
+        </div>
+        <div class="box warning">
+          <span class="label">为什么不是终点</span>
+          <p>SPFA 的速度受数据影响很大。大规模工程实现通常会转向 Dijkstra + 势能优化。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="concepts" class="card">
+      <h2>二、核心概念</h2>
+      <p>最小成本最大流的每条边至少包含三类信息：容量、费用、当前流量。</p>
+      <table>
+        <thead><tr><th>概念</th><th>符号</th><th>直觉</th></tr></thead>
+        <tbody>
+          <tr><td>容量</td><td><code>cap(u, v)</code></td><td>这条边最多允许通过多少流量。</td></tr>
+          <tr><td>费用</td><td><code>cost(u, v)</code></td><td>每通过 1 单位流量，要付出的单位成本。</td></tr>
+          <tr><td>流量</td><td><code>flow(u, v)</code></td><td>当前已经安排在这条边上的流量。</td></tr>
+          <tr><td>残量</td><td><code>cap - flow</code></td><td>这条正向边还可以继续增加多少流量。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>1. 正向边与反向边</h3>
+      <p>每加入一条真实边 <code>u -> v</code>，算法实现里通常同时加入一条反向边 <code>v -> u</code>。反向边刚开始容量为 0；当正向边走了流量，反向边就拥有同等的可撤销容量。</p>
+      <div class="formula formula-block">真实边 u -> v:
+  residual_capacity = cap - flow
+  residual_cost = cost
+
+反向边 v -> u:
+  residual_capacity = flow
+  residual_cost = -cost</div>
+      <div class="summary">
+        反向边不是业务里的反向运输，而是算法里的“撤销按钮”。走一条费用为 <code>-c</code> 的反向边，表示撤销此前在原边上花过的 <code>c</code>。
+      </div>
+
+      <svg role="img" aria-label="费用流中正向边和反向边的残量示意，原边容量为 5，费用为 3，当前已有 2 单位流量，正向还剩 3，反向可撤销 2" viewBox="0 0 860 260" width="100%">
+        <defs>
+          <marker id="spfa-res-forward" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#2f6f68"></path>
+          </marker>
+          <marker id="spfa-res-back" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#9f4d3f"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="858" height="258" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <circle cx="210" cy="130" r="42" fill="#fffdf8" stroke="#d9c6b1" stroke-width="3"></circle>
+        <circle cx="650" cy="130" r="42" fill="#fffdf8" stroke="#d9c6b1" stroke-width="3"></circle>
+        <text x="210" y="137" fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="26" font-weight="800" text-anchor="middle">u</text>
+        <text x="650" y="137" fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="26" font-weight="800" text-anchor="middle">v</text>
+        <path d="M255 104 C370 42, 490 42, 605 104" fill="none" stroke="#2f6f68" stroke-width="4" marker-end="url(#spfa-res-forward)"></path>
+        <path d="M605 156 C490 218, 370 218, 255 156" fill="none" stroke="#9f4d3f" stroke-width="4" stroke-dasharray="8 8" marker-end="url(#spfa-res-back)"></path>
+        <text x="430" y="58" fill="#2f6f68" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="850" text-anchor="middle">正向残量 3，费用 +3</text>
+        <text x="430" y="218" fill="#9f4d3f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="850" text-anchor="middle">反向残量 2，费用 -3</text>
+        <text x="430" y="130" fill="#6f675f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" text-anchor="middle">原边容量 5，单位费用 3，当前已有 2 单位流</text>
+      </svg>
+
+      <h3>2. 路径费用与瓶颈流量</h3>
+      <p>残量网络中的一条 <code>s -> t</code> 路径，代表一种可以让总流量继续增加的调整方案。路径费用是这次增加 1 单位流量的边际成本；瓶颈流量是这条路径一次最多能增广多少。</p>
+      <div class="formula formula-block">path_cost = sum(cost(e)), e 属于路径
+delta = min(residual_capacity(e)), e 属于路径
+total_cost += delta * path_cost</div>
+    </section>
+
+    <section id="spfa" class="card">
+      <h2>三、SPFA 在做什么</h2>
+      <p>SPFA 可以理解为 Bellman-Ford 的队列优化版本。它维护每个点从源点 <code>s</code> 出发的当前最小费用距离 <code>dist</code>，只要某条边能让终点距离变小，就更新距离和父指针，并把终点重新放入队列。</p>
+      <div class="formula formula-block">如果 residual_capacity(u, v) > 0
+并且 dist[v] > dist[u] + cost(u, v)
+则更新：
+  dist[v] = dist[u] + cost(u, v)
+  parent[v] = u -> v</div>
+      <p>费用流里使用 SPFA 的关键原因是：残量网络中会有负费用反向边。普通 Dijkstra 不能直接处理负边权，而 SPFA 可以在没有负费用环干扰时找到最短费用路径。</p>
+      <div class="box warning">
+        <span class="label">边界条件</span>
+        <p>如果初始图或残量网络存在可利用的负费用环，最短路会失去稳定定义，需要先做负环处理，或使用更完整的最小费用循环 / 原始对偶框架。常见的指派、运输、分仓模型通常使用非负原始费用，负边主要来自反向撤销边。</p>
+      </div>
+    </section>
+
+    <section id="process" class="card">
+      <h2>四、最短路增广流程</h2>
+      <p>SPFA 最短路增广版的最小成本最大流可以写成一个很短的循环：</p>
+      <div class="map-line" aria-label="SPFA 最短路增广流程">
+        <span class="node">初始化流量为 0</span>
+        <span class="arrow">-></span>
+        <span class="node">在残量网络跑 SPFA</span>
+        <span class="arrow">-></span>
+        <span class="node">还原最短费用路径</span>
+        <span class="arrow">-></span>
+        <span class="node">按瓶颈增广</span>
+        <span class="arrow">-></span>
+        <span class="node">重复直到 t 不可达</span>
+      </div>
+      <pre><code>flow = 0
+cost = 0
+
+while SPFA can reach t in the residual graph:
+    path = restore by parent pointers
+    delta = min residual capacity on path
+
+    for each residual edge e on path:
+        e.capacity -= delta
+        e.reverse.capacity += delta
+
+    flow += delta
+    cost += delta * dist[t]
+
+return flow, cost</code></pre>
+      <p>注意最后的 <code>dist[t]</code> 是当前残量网络中从 <code>s</code> 到 <code>t</code> 的最小路径费用，也就是这轮每增加 1 单位流量的边际成本。</p>
+    </section>
+
+    <section id="model" class="card">
+      <h2>五、示例建模</h2>
+      <p>下面用一个 2 个工人、2 个任务的例子推导。每个工人最多做 1 个任务，每个任务需要 1 个工人。边上的标签写成 <code>容量 / 费用</code>。</p>
+      <table>
+        <thead><tr><th>工人</th><th>任务 X</th><th>任务 Y</th></tr></thead>
+        <tbody>
+          <tr><td>A</td><td>1</td><td>2</td></tr>
+          <tr><td>B</td><td>2</td><td>100</td></tr>
+        </tbody>
+      </table>
+      <p>单看第一条边，<code>A -> X</code> 成本最低，算法第一轮会选它。但如果最终要做满两个任务，最优方案其实是 <code>A -> Y</code> 加 <code>B -> X</code>，总成本 <code>2 + 2 = 4</code>。这个例子正好能演示反向边如何撤销第一轮选择。</p>
+
+      <svg role="img" aria-label="初始费用流网络：源点连接工人 A 和 B，A 到 X 费用 1，A 到 Y 费用 2，B 到 X 费用 2，B 到 Y 费用 100，任务 X 和 Y 连接汇点" viewBox="0 0 940 480" width="100%">
+        <defs>
+          <marker id="spfa-init-arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+          <marker id="spfa-init-hot" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#9f4d3f"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="938" height="478" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g stroke="#8a5a35" stroke-width="4" fill="none" marker-end="url(#spfa-init-arrow)">
+          <line x1="112" y1="240" x2="247" y2="143"></line>
+          <line x1="112" y1="240" x2="247" y2="337"></line>
+          <line x1="316" y1="138" x2="605" y2="138"></line>
+          <line x1="314" y1="159" x2="605" y2="321"></line>
+          <line x1="314" y1="321" x2="605" y2="159"></line>
+          <line x1="316" y1="342" x2="605" y2="342"></line>
+          <line x1="674" y1="143" x2="812" y2="240"></line>
+          <line x1="674" y1="337" x2="812" y2="240"></line>
+        </g>
+        <path d="M316 138 L605 138" fill="none" stroke="#9f4d3f" stroke-width="6" marker-end="url(#spfa-init-hot)"></path>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="76" cy="240" r="36"></circle>
+          <circle cx="282" cy="138" r="36"></circle>
+          <circle cx="282" cy="342" r="36"></circle>
+          <circle cx="640" cy="138" r="36"></circle>
+          <circle cx="640" cy="342" r="36"></circle>
+          <circle cx="848" cy="240" r="36"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="23" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="76" y="240">s</text><text x="282" y="138">A</text><text x="282" y="342">B</text><text x="640" y="138">X</text><text x="640" y="342">Y</text><text x="848" y="240">t</text>
+        </g>
+        <g fill="#8a5a35" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="850" text-anchor="middle">
+          <text x="163" y="156">1 / 0</text><text x="163" y="340">1 / 0</text>
+          <text x="461" y="112" fill="#9f4d3f">1 / 1</text><text x="458" y="220">1 / 2</text><text x="458" y="282">1 / 2</text><text x="461" y="371">1 / 100</text>
+          <text x="745" y="156">1 / 0</text><text x="745" y="340">1 / 0</text>
+        </g>
+        <text x="470" y="430" fill="#6f675f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" text-anchor="middle">第一轮最短费用路径是 s -> A -> X -> t，单位费用为 1。</text>
+      </svg>
+    </section>
+
+    <section id="derive" class="card">
+      <h2>六、逐轮推导</h2>
+      <h3>第 1 轮：选当前最便宜路径</h3>
+      <p>初始时所有流量为 0。SPFA 从 <code>s</code> 出发，能得到下面这些候选路径费用：</p>
+      <table>
+        <thead><tr><th>路径</th><th>费用</th><th>是否最短</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> A -> X -> t</code></td><td><code>0 + 1 + 0 = 1</code></td><td><span class="score">是</span></td></tr>
+          <tr><td><code>s -> A -> Y -> t</code></td><td><code>0 + 2 + 0 = 2</code></td><td><span class="score">否</span></td></tr>
+          <tr><td><code>s -> B -> X -> t</code></td><td><code>0 + 2 + 0 = 2</code></td><td><span class="score">否</span></td></tr>
+          <tr><td><code>s -> B -> Y -> t</code></td><td><code>0 + 100 + 0 = 100</code></td><td><span class="score">否</span></td></tr>
+        </tbody>
+      </table>
+      <div class="formula formula-block">P1 = s -> A -> X -> t
+delta = min(1, 1, 1) = 1
+flow = 1
+total_cost = 1</div>
+      <p>增广后，<code>s -> A</code>、<code>A -> X</code>、<code>X -> t</code> 都被占满。残量网络里会出现三条反向边：<code>A -> s</code> 费用 0、<code>X -> A</code> 费用 -1、<code>t -> X</code> 费用 0。</p>
+
+      <svg role="img" aria-label="第一轮增广后的残量网络，已选择 s 到 A 到 X 到 t；A 到 X 的反向边 X 到 A 费用为负一，下一轮可以用它撤销并重排" viewBox="0 0 940 510" width="100%">
+        <defs>
+          <marker id="spfa-r1-forward" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#2f6f68"></path>
+          </marker>
+          <marker id="spfa-r1-back" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#9f4d3f"></path>
+          </marker>
+          <marker id="spfa-r1-gray" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#b8aea2"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="938" height="508" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g stroke="#b8aea2" stroke-width="3" fill="none" marker-end="url(#spfa-r1-gray)" opacity="0.65">
+          <line x1="112" y1="240" x2="247" y2="143"></line>
+          <line x1="316" y1="138" x2="605" y2="138"></line>
+          <line x1="674" y1="143" x2="812" y2="240"></line>
+        </g>
+        <g stroke="#2f6f68" stroke-width="4" fill="none" marker-end="url(#spfa-r1-forward)">
+          <line x1="112" y1="240" x2="247" y2="337"></line>
+          <line x1="314" y1="159" x2="605" y2="321"></line>
+          <line x1="314" y1="321" x2="605" y2="159"></line>
+          <line x1="316" y1="342" x2="605" y2="342"></line>
+          <line x1="674" y1="337" x2="812" y2="240"></line>
+        </g>
+        <g stroke="#9f4d3f" stroke-width="4" stroke-dasharray="8 7" fill="none" marker-end="url(#spfa-r1-back)">
+          <path d="M247 126 C182 76, 105 120, 92 204"></path>
+          <path d="M606 116 C510 68, 412 68, 316 116"></path>
+          <path d="M812 220 C742 170, 719 120, 676 121"></path>
+        </g>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="76" cy="240" r="36"></circle><circle cx="282" cy="138" r="36"></circle><circle cx="282" cy="342" r="36"></circle>
+          <circle cx="640" cy="138" r="36"></circle><circle cx="640" cy="342" r="36"></circle><circle cx="848" cy="240" r="36"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="23" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="76" y="240">s</text><text x="282" y="138">A</text><text x="282" y="342">B</text><text x="640" y="138">X</text><text x="640" y="342">Y</text><text x="848" y="240">t</text>
+        </g>
+        <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="850" text-anchor="middle">
+          <text x="164" y="347" fill="#2f6f68">正 1 / 0</text>
+          <text x="458" y="222" fill="#2f6f68">正 1 / 2</text>
+          <text x="458" y="278" fill="#2f6f68">正 1 / 2</text>
+          <text x="461" y="370" fill="#2f6f68">正 1 / 100</text>
+          <text x="745" y="340" fill="#2f6f68">正 1 / 0</text>
+          <text x="164" y="124" fill="#b8aea2">正 0 / 0</text>
+          <text x="461" y="98" fill="#b8aea2">正 0 / 1</text>
+          <text x="745" y="124" fill="#b8aea2">正 0 / 0</text>
+          <text x="164" y="82" fill="#9f4d3f">反 1 / 0</text>
+          <text x="461" y="60" fill="#9f4d3f">反 1 / -1</text>
+          <text x="745" y="82" fill="#9f4d3f">反 1 / 0</text>
+          <text x="470" y="455" fill="#6f675f" font-size="15">灰色正向边已满；紫色虚线是可撤销的反向边。</text>
+        </g>
+      </svg>
+
+      <div class="note">
+        <strong>为什么第一轮后还要继续？</strong>找到 <code>P1</code> 只是找到了“一种可以增加 1 单位流量的办法”。增广是把这件事真正写入当前流量：把 <code>s -> A</code>、<code>A -> X</code>、<code>X -> t</code> 的真实流量都加 1。此时总流量只有 1，但网络里还存在从 <code>s</code> 到 <code>t</code> 的残量路径，所以最小成本最大流还不能停。最大流目标下的继续条件是：<code>SPFA</code> 还能在残量网络中到达 <code>t</code>；如果是指定流量 <code>K</code> 的最小费用流，则是还没送满 <code>K</code> 且 <code>t</code> 仍可达。
+      </div>
+
+      <h3>第 2 轮：SPFA 使用反向边重排</h3>
+      <p>如果没有反向边，下一条看似可行的直接路径只有 <code>s -> B -> Y -> t</code>，费用高达 100。但残量网络里还有一条更便宜的调整路径：</p>
+      <div class="formula formula-block">P2 = s -> B -> X -> A -> Y -> t
+path_cost = 0 + 2 + (-1) + 2 + 0 = 3
+delta = 1</div>
+      <p>这条路径里的 <code>X -> A</code> 是反向边，含义是撤销第一轮的 <code>A -> X</code>。增广后，第一轮的安排被重排为：<code>A</code> 改去做 <code>Y</code>，<code>B</code> 改去做 <code>X</code>。</p>
+      <div class="formula formula-block">第 2 轮不是新增一条最终分配路径，而是一组调整动作：
+  s -> B: 增加 1
+  B -> X: 增加 1
+  X -> A: 走反向边，所以 A -> X 减少 1
+  A -> Y: 增加 1
+  Y -> t: 增加 1</div>
+
+      <svg role="img" aria-label="第二轮残量网络中的最短费用路径 s 到 B 到 X 到 A 到 Y 到 t，其中 X 到 A 是费用为负一的反向边，用来撤销第一轮 A 到 X 的流量" viewBox="0 0 940 530" width="100%">
+        <defs>
+          <marker id="spfa-r2-forward" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#2f6f68"></path>
+          </marker>
+          <marker id="spfa-r2-path" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#9f4d3f"></path>
+          </marker>
+          <marker id="spfa-r2-soft" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#b8aea2"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="938" height="528" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g stroke="#b8aea2" stroke-width="3" fill="none" marker-end="url(#spfa-r2-soft)" opacity="0.45">
+          <line x1="112" y1="240" x2="247" y2="143"></line>
+          <line x1="316" y1="138" x2="605" y2="138"></line>
+          <line x1="674" y1="143" x2="812" y2="240"></line>
+          <line x1="316" y1="342" x2="605" y2="342"></line>
+        </g>
+        <g stroke="#2f6f68" stroke-width="3" fill="none" marker-end="url(#spfa-r2-forward)" opacity="0.42">
+          <line x1="314" y1="321" x2="605" y2="159"></line>
+        </g>
+        <g stroke="#9f4d3f" stroke-width="6" fill="none" marker-end="url(#spfa-r2-path)">
+          <line x1="112" y1="240" x2="247" y2="337"></line>
+          <line x1="314" y1="321" x2="605" y2="159"></line>
+          <path d="M606 116 C510 68, 412 68, 316 116"></path>
+          <line x1="314" y1="159" x2="605" y2="321"></line>
+          <line x1="674" y1="337" x2="812" y2="240"></line>
+        </g>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="76" cy="240" r="36"></circle><circle cx="282" cy="138" r="36"></circle><circle cx="282" cy="342" r="36"></circle>
+          <circle cx="640" cy="138" r="36"></circle><circle cx="640" cy="342" r="36"></circle><circle cx="848" cy="240" r="36"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="23" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="76" y="240">s</text><text x="282" y="138">A</text><text x="282" y="342">B</text><text x="640" y="138">X</text><text x="640" y="342">Y</text><text x="848" y="240">t</text>
+        </g>
+        <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="850" text-anchor="middle">
+          <text x="164" y="347" fill="#9f4d3f">0</text>
+          <text x="458" y="276" fill="#9f4d3f">+2</text>
+          <text x="461" y="60" fill="#9f4d3f">-1</text>
+          <text x="458" y="222" fill="#9f4d3f">+2</text>
+          <text x="745" y="340" fill="#9f4d3f">0</text>
+          <text x="461" y="386" fill="#b8aea2">直接 B -> Y 费用 100，较差</text>
+          <text x="470" y="470" fill="#6f675f" font-size="15">红色路径的单位费用为 3，比直接走 B -> Y 的 100 便宜很多。</text>
+        </g>
+      </svg>
+
+      <h3>第 2 轮更新后的真实流量</h3>
+      <p>沿 <code>P2</code> 增广 1 单位后，真实流量变化如下：</p>
+      <table>
+        <thead><tr><th>边</th><th>变化</th><th>解释</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> B</code></td><td>增加 1</td><td>B 开始接一个任务。</td></tr>
+          <tr><td><code>B -> X</code></td><td>增加 1</td><td>B 接下任务 X。</td></tr>
+          <tr><td><code>X -> A</code></td><td>走反向边</td><td>撤销原来的 <code>A -> X</code>。</td></tr>
+          <tr><td><code>A -> Y</code></td><td>增加 1</td><td>A 改去做任务 Y。</td></tr>
+          <tr><td><code>Y -> t</code></td><td>增加 1</td><td>任务 Y 被完成。</td></tr>
+        </tbody>
+      </table>
+      <p><code>A -> X</code> 和 <code>X -> A</code> 的“抵消”，只发生在真实边 <code>A -> X</code> 的流量上：第一轮把 <code>A -> X</code> 加到 1，第二轮走反向边 <code>X -> A</code> 又把它减回 0。注意 <code>X -> t</code> 没有被撤销，它保留第一轮的 1 单位流量；第二轮新增的 <code>B -> X</code> 正好接上这条出口，所以任务 <code>X</code> 最终由 <code>B</code> 完成。</p>
+      <div class="formula formula-block">flow = 2
+total_cost = 第 1 轮成本 1 + 第 2 轮边际成本 3 = 4
+最终分配：A -> Y，B -> X</div>
+
+      <svg role="img" aria-label="最终真实流量图，A 分配给 Y，B 分配给 X，总流量为 2，总成本为 4" viewBox="0 0 940 480" width="100%">
+        <defs>
+          <marker id="spfa-final-flow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#2f6f68"></path>
+          </marker>
+          <marker id="spfa-final-unused" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#b8aea2"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="938" height="478" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g stroke="#b8aea2" stroke-width="3" fill="none" marker-end="url(#spfa-final-unused)" opacity="0.45">
+          <line x1="316" y1="138" x2="605" y2="138"></line>
+          <line x1="316" y1="342" x2="605" y2="342"></line>
+        </g>
+        <g stroke="#2f6f68" stroke-width="6" fill="none" marker-end="url(#spfa-final-flow)">
+          <line x1="112" y1="240" x2="247" y2="143"></line>
+          <line x1="112" y1="240" x2="247" y2="337"></line>
+          <line x1="314" y1="159" x2="605" y2="321"></line>
+          <line x1="314" y1="321" x2="605" y2="159"></line>
+          <line x1="674" y1="143" x2="812" y2="240"></line>
+          <line x1="674" y1="337" x2="812" y2="240"></line>
+        </g>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="76" cy="240" r="36"></circle><circle cx="282" cy="138" r="36"></circle><circle cx="282" cy="342" r="36"></circle>
+          <circle cx="640" cy="138" r="36"></circle><circle cx="640" cy="342" r="36"></circle><circle cx="848" cy="240" r="36"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="23" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="76" y="240">s</text><text x="282" y="138">A</text><text x="282" y="342">B</text><text x="640" y="138">X</text><text x="640" y="342">Y</text><text x="848" y="240">t</text>
+        </g>
+        <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="850" text-anchor="middle">
+          <text x="163" y="156" fill="#2f6f68">1 / 1</text><text x="163" y="340" fill="#2f6f68">1 / 1</text>
+          <text x="458" y="222" fill="#2f6f68">A -> Y，成本 2</text><text x="458" y="276" fill="#2f6f68">B -> X，成本 2</text>
+          <text x="461" y="112" fill="#b8aea2">A -> X 未用</text><text x="461" y="371" fill="#b8aea2">B -> Y 未用</text>
+          <text x="745" y="156" fill="#2f6f68">1 / 1</text><text x="745" y="340" fill="#2f6f68">1 / 1</text>
+          <text x="470" y="430" fill="#6f675f" font-size="15">最大流量 2；总费用 2 + 2 = 4。</text>
+        </g>
+      </svg>
+
+      <h3>终止</h3>
+      <p>最终 <code>s -> A</code> 和 <code>s -> B</code> 都已经满流，源点无法再到达任何有正向供给残量的工人，因此残量网络中不存在新的 <code>s -> t</code> 路径。算法终止，当前流量 2 是最大流；在流量为 2 的所有方案里，总费用 4 是最小的。</p>
+      <div class="summary">
+        这个例子的重点不是算出 4，而是看见“反向边 + 负费用”如何让算法改正第一轮局部选择：先走 <code>A -> X</code> 没问题，因为第二轮可以通过 <code>X -> A</code> 把这 1 单位流量退回来，再交给更合适的组合。
+      </div>
+    </section>
+
+    <section id="why" class="card">
+      <h2>七、为什么能得到低成本最大流</h2>
+      <p>最短路增广有一个关键不变式：每一轮都在当前残量网络中选择边际成本最低的可增广方案。残量网络同时包含“继续增加”和“撤销重排”两种动作，所以它看到的不是局部贪心的静态选择，而是对当前整套流量方案的最便宜调整。</p>
+      <div class="grid2">
+        <div class="box good">
+          <span class="label green">容量正确性</span>
+          <p>每轮只沿残量容量大于 0 的边增广，且按路径瓶颈推流，所以不会违反容量约束。</p>
+        </div>
+        <div class="box good">
+          <span class="label green">费用改进性</span>
+          <p>反向边允许撤销历史流量。只要有更低成本的重排机会，它会表现为残量网络中的便宜路径或负费用调整。</p>
+        </div>
+      </div>
+      <p>当残量网络里已经没有 <code>s -> t</code> 路径时，说明无法继续增加总流量，当前流是最大流。由于每个流量层级都是通过最短费用增广路径推进，并持续保留可撤销调整，最终得到的是最大流量下的最小费用方案。</p>
+      <div class="box warning">
+        <span class="label">不要误解</span>
+        <p>它不是“每次选原始图中最便宜边”。它每次选的是残量网络里的最短费用路径，路径中可能混合正向新增边和反向撤销边，这才是费用流区别于简单贪心分配的核心。</p>
+      </div>
+    </section>
+
+    <section id="practice" class="card">
+      <h2>八、实现要点</h2>
+      <h3>1. 边结构必须记录反向边下标</h3>
+      <p>实现时，一条真实边和一条反向边要互相知道对方在邻接表里的位置。这样沿路径增广时，才能同时减少当前边残量、增加反向边残量。</p>
+      <pre><code>add_edge(u, v, cap, cost):
+    forward = Edge(to=v, rev=len(graph[v]), cap=cap, cost=cost)
+    backward = Edge(to=u, rev=len(graph[u]), cap=0, cost=-cost)
+    graph[u].append(forward)
+    graph[v].append(backward)</code></pre>
+
+      <h3>2. SPFA 只松弛残量大于 0 的边</h3>
+      <p>已经满流的正向边不能继续走；没有可撤销流量的反向边也不能走。判断条件通常写成：</p>
+      <div class="formula formula-block">if edge.cap > 0 and dist[edge.to] > dist[u] + edge.cost:
+    relax</div>
+
+      <h3>3. 父指针记录的是边，不只是点</h3>
+      <p>费用流更新时必须知道路径上到底用了哪条边，因为同一对点之间可能有多条边，且需要通过边的反向下标更新残量。</p>
+      <div class="formula formula-block">parent_node[v] = u
+parent_edge_index[v] = i  // graph[u][i] 是这次最短路使用的边</div>
+
+      <h3>4. 复杂度直觉</h3>
+      <p>如果每次至少增广 1 单位整数流，最多增广 <code>F</code> 轮。SPFA 单轮常见粗略上界按 <code>O(VE)</code> 理解，因此教学版常写成：</p>
+      <div class="formula formula-block">O(F * V * E)</div>
+      <p>这个表达更像风险提示：当最大流量数值很大，或者图结构让 SPFA 反复入队时，它会变慢。理解清楚 SPFA 版本之后，再学习 Dijkstra + 势能优化会自然很多。</p>
+
+      <blockquote>最小成本最大流的核心不是 SPFA 本身，而是“在残量网络中用最短费用路径做可撤销的增广”。SPFA 只是最直观的第一把钥匙。</blockquote>
+    </section>
+
+    <footer><p>相关延伸：可以先阅读最大流、Ford-Fulkerson、Edmonds-Karp 和最小成本最大流总览，再继续进入 Dijkstra + 势能优化版本。</p></footer>
+  </main>
+</body>
+</html>

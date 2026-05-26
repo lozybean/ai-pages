@@ -176,11 +176,13 @@ v -> u, residual = 6</div>
         <span class="node">更新残量网络</span>
       </div>
       <p>如果容量都是整数，它一定会终止；如果随意选择路径，复杂度常写成 <code>O(E * F)</code>，其中 <code>F</code> 是最大流值。这个表达说明它可能受数值大小影响，而不只是受图规模影响。</p>
+      <div class="note">延伸阅读：<a href="ford-fulkerson-maximum-flow-derivation.html">Ford-Fulkerson 推导</a>用一个会选错初始路径的网络，展示残量网络和反向边如何修正已有流量。</div>
 
       <h3>2. Edmonds-Karp 算法</h3>
       <p>Edmonds-Karp 给 Ford-Fulkerson 加上固定策略：每次用 BFS 找边数最少的增广路径。这样路径选择不再随意，复杂度有稳定上界：</p>
       <div class="formula formula-block">O(V * E^2)</div>
       <p>它适合教学、验证和中小规模问题。实现直观，但在较大图上通常不如 Dinic 常用。</p>
+      <div class="note">延伸阅读：<a href="edmonds-karp-maximum-flow.html">Edmonds-Karp 推导</a>重点解释 BFS 为什么能稳定选择最短增广路径，并逐轮计算最大流。</div>
 
       <h3>3. Dinic 算法</h3>
       <p>Dinic 的思想是“先分层，再批量增广”。它和 Hopcroft-Karp 的气质很接近：不再一条路一条路随便找，而是在层次图里尽可能找出一个阻塞流。</p>
@@ -194,6 +196,7 @@ v -> u, residual = 6</div>
         <span class="node">重新分层</span>
       </div>
       <p>当前弧优化会记录每个点已经尝试到哪条边，避免 DFS 反复扫描已证明无效的边。实践中，Dinic 是最大流问题里非常常用的实现选择。</p>
+      <div class="note">延伸阅读：<a href="dinic-maximum-flow.html">Dinic 推导</a>从分层图、阻塞流和当前弧优化出发，展示它如何比逐条路径增广更高效。</div>
 
       <table>
         <thead><tr><th>算法</th><th>找路方式</th><th>一轮推进</th><th>适合场景</th></tr></thead>
@@ -289,6 +292,7 @@ max_flow < D   表示存在供给、路径或容量瓶颈</div>
         </tbody>
       </table>
       <blockquote>最小费用最大流不是另起炉灶，而是在最大流的残量网络上继续引入费用、势能和最短路思想。</blockquote>
+      <div class="note">延伸阅读：<a href="min-cost-max-flow-spfa-augmentation.html">SPFA 最短路增广推导</a>从最大流熟悉的残量网络出发，进一步解释费用、负费用反向边和最短费用增广路径。</div>
       <div class="summary">
         最小学习闭环：能解释“反向边为什么代表撤销历史流量”，能说明“没有增广路径为什么对应一个最小割”，再能把供给、需求、路径和容量翻译成图，最大流的核心就已经站稳了。
       </div>
