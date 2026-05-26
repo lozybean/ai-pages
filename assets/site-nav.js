@@ -4,9 +4,9 @@
   const currentPath = trimSlash(window.location.pathname);
 
   const links = [
-    { label: "首页", path: "" },
-    { label: "物流运筹", path: "topics/logistics-or/" },
-    { label: "思考专题", path: "topics/think/" }
+    { label: "首页", path: "index.html" },
+    { label: "物流运筹", path: "topics/logistics-or/index.html" },
+    { label: "思考专题", path: "topics/think/index.html" }
   ];
 
   const nav = document.createElement("nav");
@@ -14,7 +14,7 @@
   nav.setAttribute("aria-label", "主导航");
   nav.innerHTML = `
     <div class="ai-site-nav__inner">
-      <a class="ai-site-nav__brand" href="${urlFor("")}" aria-label="AI Pages 首页">
+      <a class="ai-site-nav__brand" href="${urlFor("index.html")}" aria-label="AI Pages 首页">
         <span class="ai-site-nav__mark">AI</span>
         <span>AI Pages</span>
       </a>
@@ -57,8 +57,8 @@
     if (target === currentPath) {
       return true;
     }
-    if (path === "") {
-      return currentPath === trimSlash(siteRoot.pathname);
+    if (path === "" || target === trimSlash(siteRoot.pathname)) {
+      return false;
     }
     return currentPath.startsWith(target + "/");
   }

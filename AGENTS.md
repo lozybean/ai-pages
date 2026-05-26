@@ -41,6 +41,8 @@ Adjust the relative prefix by page depth:
 
 When adding nav items, edit only the `links` array in `assets/site-nav.js`. Keep the nav focused on site navigation; do not add per-article links such as source-code links.
 
+Use explicit `index.html` targets for shared navigation and topic-index links, for example `topics/logistics-or/index.html` instead of `topics/logistics-or/`. GitHub Pages resolves directory URLs, but direct local file preview does not always open the directory's `index.html`.
+
 Avoid page-local back links near the top of articles when the shared nav already provides the same route. They tend to look inconsistent across older pages.
 
 List pages should not show "view source" actions. Keep card actions reader-facing: open the page/article, and optionally jump to the related topic index.
