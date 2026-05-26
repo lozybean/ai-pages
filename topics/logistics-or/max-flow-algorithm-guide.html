@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>最大流算法：从残量网络到业务建模</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <div class="eyebrow">物流运筹 · 网络流基础</div>
+      <h1>最大流算法：从残量网络到业务建模</h1>
+      <p class="intro">最大流不是在一张图里找一条最好的路，而是在容量受限的网络中安排一组可以同时存在的流动方案。理解残量网络、反向边和最大流最小割定理，就能把物流履约、库存分配、服务容量和匹配问题统一到同一种建模语言里。</p>
+      <div class="meta"><span class="tag">最大流</span><span class="tag">残量网络</span><span class="tag">增广路径</span><span class="tag">Dinic</span><span class="tag">网络流建模</span></div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#question">一、最大流在问什么</a>
+      <a href="#model">二、流网络的数学模型</a>
+      <a href="#residual">三、为什么需要残量网络</a>
+      <a href="#theorem">四、最大流最小割定理</a>
+      <a href="#algorithms">五、三类经典算法</a>
+      <a href="#modeling">六、常见建模套路</a>
+      <a href="#applications">七、业务应用与边界</a>
+      <a href="#mcmf">八、通向最小费用最大流</a>
+    </nav>
+
+    <section id="question" class="card">
+      <h2>一、最大流在问什么</h2>
+      <p>最大流问题研究的是：在一个有方向、有容量上限的网络中，从源点 <code>s</code> 到汇点 <code>t</code> 最多可以通过多少流量。</p>
+      <blockquote>最大流不是找一条最宽的路，而是找一组互相协调的通路，让整个网络的总通过量最大。</blockquote>
+      <div class="grid2">
+        <div class="box note">
+          <span class="label">直觉图景</span>
+          <p>把网络看成水管系统。每条边是一根管道，容量是管径上限；源点是水源，汇点是出口。最大流就是整个系统最多能排出多少水。</p>
+        </div>
+        <div class="box business">
+          <span class="label">业务图景</span>
+          <p>把网络看成仓网、运力、服务调用或资源分配系统。边容量表示可运输量、处理量、库存量或可匹配次数，最大流表示系统在当前约束下的满足上界。</p>
+        </div>
+      </div>
+      <div class="map-line" aria-label="最大流问题抽象流程">
+        <span class="node">供给端<br /><small>产能 / 库存</small></span>
+        <span class="arrow">-></span>
+        <span class="node">中间网络<br /><small>路由 / 转运 / 处理能力</small></span>
+        <span class="arrow">-></span>
+        <span class="node">需求端<br /><small>订单 / 请求 / 任务</small></span>
+        <span class="arrow">-></span>
+        <span class="node">最大可满足量</span>
+      </div>
+      <p>这类问题的关键不是局部路径看起来多顺，而是多个路径同时使用时会不会争抢同一条瓶颈边。最大流算法正是为了处理这种全局容量协调。</p>
+    </section>
+
+    <section id="model" class="card">
+      <h2>二、流网络的数学模型</h2>
+      <p>一个流网络通常记为有向图：</p>
+      <div class="formula formula-block">G = (V, E)</div>
+      <p>其中 <code>V</code> 是节点集合，<code>E</code> 是有向边集合。每条边 <code>(u, v)</code> 有非负容量 <code>c(u, v)</code>，并指定源点 <code>s</code> 和汇点 <code>t</code>。</p>
+
+      <h3>1. 流函数</h3>
+      <p>对每条边定义实际通过的流量：</p>
+      <div class="formula formula-block">f(u, v) = 边 u -> v 上的实际流量</div>
+
+      <h3>2. 三个核心约束</h3>
+      <table>
+        <thead><tr><th>约束</th><th>公式</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td>容量约束</td><td><code>0 <= f(u, v) <= c(u, v)</code></td><td>每条边不能超过自己的承载上限。</td></tr>
+          <tr><td>流量守恒</td><td><code>sum f(u, v) = sum f(v, w)</code></td><td>除源点和汇点外，中间节点流入多少就流出多少。</td></tr>
+          <tr><td>最大化目标</td><td><code>max |f|</code></td><td>让从源点流出的总量，也就是进入汇点的总量最大。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>3. 流量值</h3>
+      <p>一个可行流的值可以从源点出边计算，也可以从汇点入边计算：</p>
+      <div class="formula formula-block">|f| = sum f(s, v) = sum f(u, t)</div>
+      <p>两者相等来自流量守恒：中间节点只是转运，不会凭空产生或吞掉流量。</p>
+    </section>
+
+    <section id="residual" class="card">
+      <h2>三、为什么需要残量网络</h2>
+      <p>最朴素的想法是：只要还能找到一条从 <code>s</code> 到 <code>t</code> 的路，就沿着这条路尽量送流。路径能送多少，由路径上最小剩余容量决定。</p>
+      <svg role="img" aria-label="从 s 到 t 的一条路径，边容量分别为 5、2、4，其中 A 到 B 的容量 2 是瓶颈" viewBox="0 0 760 180" width="100%" style="display:block; margin: 18px 0 12px; max-width: 760px;">
+        <defs>
+          <marker id="arrow-main" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+          <marker id="arrow-bottleneck" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#9f4d3f"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="758" height="178" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <line x1="118" y1="90" x2="252" y2="90" stroke="#8a5a35" stroke-width="4" marker-end="url(#arrow-main)"></line>
+        <line x1="318" y1="90" x2="452" y2="90" stroke="#9f4d3f" stroke-width="5" marker-end="url(#arrow-bottleneck)"></line>
+        <line x1="518" y1="90" x2="652" y2="90" stroke="#8a5a35" stroke-width="4" marker-end="url(#arrow-main)"></line>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="82" cy="90" r="36"></circle>
+          <circle cx="282" cy="90" r="36"></circle>
+          <circle cx="482" cy="90" r="36"></circle>
+          <circle cx="682" cy="90" r="36"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="24" font-weight="800" text-anchor="middle" dominant-baseline="middle">
+          <text x="82" y="90">s</text>
+          <text x="282" y="90">A</text>
+          <text x="482" y="90">B</text>
+          <text x="682" y="90">t</text>
+        </g>
+        <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="800" text-anchor="middle">
+          <text x="185" y="66" fill="#8a5a35">容量 5</text>
+          <text x="385" y="66" fill="#9f4d3f">容量 2：瓶颈</text>
+          <text x="585" y="66" fill="#8a5a35">容量 4</text>
+        </g>
+        <text x="380" y="146" fill="#6f675f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" text-anchor="middle">这条路径一次最多只能增加 2 单位流量，因为所有流量都必须经过容量最小的 A -> B。</text>
+      </svg>
+      <div class="formula formula-block">bottleneck = min(5, 2, 4) = 2</div>
+      <p>但最大流不是简单地把每条路径依次填满。早期流量可能占用关键边，后续需要调整已有安排。残量网络就是用来表达“还能增加多少”和“已经安排的流量最多能撤回多少”。</p>
+
+      <h3>1. 反向边不是业务倒流，而是算法反悔</h3>
+      <p>假设原图有一条边：</p>
+      <div class="formula formula-block">u -> v, capacity = 10, current flow = 6</div>
+      <p>这时正向还能继续增加 <code>4</code>，而已经送出的 <code>6</code> 可以在算法上被撤回。因此残量网络中同时存在：</p>
+      <div class="formula formula-block">u -> v, residual = 4
+v -> u, residual = 6</div>
+      <div class="box warn">
+        <span class="label">容易误解的点</span>
+        <p>反向边不表示真实业务中货物、订单或请求真的反向流动。它表示算法可以取消过去在 <code>u -> v</code> 上安排的一部分流量，把容量释放给更合适的组合。</p>
+      </div>
+
+      <h3>2. 增广路径是在残量网络中找调整机会</h3>
+      <p>如果残量网络里仍然存在从 <code>s</code> 到 <code>t</code> 的路径，就说明当前流还可以通过“继续增加”和“局部撤销”组合起来变得更大。这条路径称为增广路径。</p>
+      <div class="formula formula-block">沿增广路径增加 delta：
+正向残量 -= delta
+反向残量 += delta
+总流量 += delta</div>
+      <p>当路径中走到某条反向边时，含义就是减少对应原边上的流量。这一步让最大流算法区别于简单贪心分配：它不是一次性占坑，而是在不断修正中逼近全局最优。</p>
+
+      <h3>3. 概念链路</h3>
+      <div class="summary">
+        最大流算法的核心链路是：容量约束决定每条边的上限；残量网络描述当前还能怎么调整；增广路径带来新的流量增长；当残量网络中已经没有增广路径时，当前流达到最大。至于“为什么某些路径选择需要反悔”的完整推导，更适合放在下一篇 Ford-Fulkerson 中展开。
+      </div>
+    </section>
+
+    <section id="theorem" class="card">
+      <h2>四、最大流最小割定理</h2>
+      <p>最大流算法为什么正确，最终依赖一个核心定理：<strong>最大流的值等于最小割的容量</strong>。</p>
+
+      <h3>1. 什么是割</h3>
+      <p>把所有节点分成两个集合 <code>S</code> 和 <code>T</code>，满足 <code>s in S</code> 且 <code>t in T</code>。所有从 <code>S</code> 指向 <code>T</code> 的边构成一个割，割容量是这些边容量之和：</p>
+      <div class="formula formula-block">capacity(S, T) = sum c(u, v), 其中 u in S, v in T</div>
+
+      <h3>2. 为什么任何流都不会超过任何割</h3>
+      <p>从源点到汇点的所有流量都必须穿过任意一个割。割上的边容量合起来就是这道边界允许通过的最大上限，所以：</p>
+      <div class="formula formula-block">任意可行流 <= 任意割容量
+最大流 <= 最小割</div>
+
+      <h3>3. 没有增广路径时意味着什么</h3>
+      <p>当残量网络中已经无法从 <code>s</code> 到达 <code>t</code> 时，说明无论是继续使用剩余容量，还是撤销并重排已有流量，都不能让总流量继续增加。此时从 <code>s</code> 仍可达的点和不可达的点之间，会形成一道被容量卡住的边界。</p>
+      <blockquote>找不到增广路径，不只是“算法搜不到路了”，而是当前网络已经出现了一道容量刚好等于当前流量的最小割。</blockquote>
+    </section>
+
+    <section id="algorithms" class="card">
+      <h2>五、三类经典算法</h2>
+      <p>最大流算法的差异主要在两件事：如何找增广路径，以及一轮增广能推进多少流量。</p>
+
+      <h3>1. Ford-Fulkerson 方法</h3>
+      <p>Ford-Fulkerson 是一类方法框架：不断在残量网络中寻找增广路径，并沿路径推入瓶颈流量。</p>
+      <div class="map-line" aria-label="Ford-Fulkerson 方法流程">
+        <span class="node">找增广路径</span>
+        <span class="arrow">-></span>
+        <span class="node">计算瓶颈容量</span>
+        <span class="arrow">-></span>
+        <span class="node">沿路径增广</span>
+        <span class="arrow">-></span>
+        <span class="node">更新残量网络</span>
+      </div>
+      <p>如果容量都是整数，它一定会终止；如果随意选择路径，复杂度常写成 <code>O(E * F)</code>，其中 <code>F</code> 是最大流值。这个表达说明它可能受数值大小影响，而不只是受图规模影响。</p>
+
+      <h3>2. Edmonds-Karp 算法</h3>
+      <p>Edmonds-Karp 给 Ford-Fulkerson 加上固定策略：每次用 BFS 找边数最少的增广路径。这样路径选择不再随意，复杂度有稳定上界：</p>
+      <div class="formula formula-block">O(V * E^2)</div>
+      <p>它适合教学、验证和中小规模问题。实现直观，但在较大图上通常不如 Dinic 常用。</p>
+
+      <h3>3. Dinic 算法</h3>
+      <p>Dinic 的思想是“先分层，再批量增广”。它和 Hopcroft-Karp 的气质很接近：不再一条路一条路随便找，而是在层次图里尽可能找出一个阻塞流。</p>
+      <div class="map-line" aria-label="Dinic 算法流程">
+        <span class="node">BFS 建层次图</span>
+        <span class="arrow">-></span>
+        <span class="node">只保留向下一层的边</span>
+        <span class="arrow">-></span>
+        <span class="node">DFS 推阻塞流</span>
+        <span class="arrow">-></span>
+        <span class="node">重新分层</span>
+      </div>
+      <p>当前弧优化会记录每个点已经尝试到哪条边，避免 DFS 反复扫描已证明无效的边。实践中，Dinic 是最大流问题里非常常用的实现选择。</p>
+
+      <table>
+        <thead><tr><th>算法</th><th>找路方式</th><th>一轮推进</th><th>适合场景</th></tr></thead>
+        <tbody>
+          <tr><td>Ford-Fulkerson</td><td>任意增广路径</td><td>一条路径</td><td>理解最大流思想的基础框架。</td></tr>
+          <tr><td>Edmonds-Karp</td><td>BFS 最短增广路径</td><td>一条路径</td><td>实现稳定，适合教学和小中规模验证。</td></tr>
+          <tr><td>Dinic</td><td>BFS 分层 + DFS</td><td>一个阻塞流</td><td>工程和竞赛中常用，适合更大规模的稀疏图。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="modeling" class="card">
+      <h2>六、常见建模套路</h2>
+      <p>学最大流最有价值的部分，不是背某个模板，而是把业务约束翻译成节点、边和容量。</p>
+
+      <div class="grid2">
+        <div class="mini">
+          <h3>超级源点与超级汇点</h3>
+          <p>多个供给点、多个需求点可以统一接到超级源点和超级汇点。</p>
+          <div class="formula formula-block">S -> 每个供给点，容量 = 供给量
+每个需求点 -> T，容量 = 需求量</div>
+        </div>
+        <div class="mini">
+          <h3>点容量转边容量</h3>
+          <p>如果限制的是节点处理能力，可以把节点拆成入点和出点。</p>
+          <div class="formula formula-block">v_in -> v_out，容量 = 节点能力
+入边连 v_in，出边从 v_out 发出</div>
+        </div>
+        <div class="mini">
+          <h3>二分图匹配转最大流</h3>
+          <p>一对一匹配可以看成所有容量为 1 的特殊最大流。</p>
+          <div class="formula formula-block">s -> 左侧点，容量 1
+左侧点 -> 右侧点，容量 1
+右侧点 -> t，容量 1</div>
+        </div>
+        <div class="mini">
+          <h3>多对多分配</h3>
+          <p>只要把容量从 1 改成对应上限，就能表达一对多或多对多。</p>
+          <div class="formula formula-block">仓库 -> 区域，容量 = 可配送能力
+区域 -> t，容量 = 区域需求</div>
+        </div>
+      </div>
+
+      <h3>用最大流判断可行性</h3>
+      <p>如果总需求为 <code>D</code>，构图后求最大流：</p>
+      <div class="formula formula-block">max_flow == D  表示需求全部可满足
+max_flow < D   表示存在供给、路径或容量瓶颈</div>
+      <p>更进一步，最小割还能告诉你瓶颈大致出在哪个边界上：是供给不足、转运链路不足，还是需求侧入口能力不足。</p>
+    </section>
+
+    <section id="applications" class="card">
+      <h2>七、业务应用与边界</h2>
+      <div class="grid2">
+        <div class="mini">
+          <h3>物流履约能力</h3>
+          <p>工厂、仓库、分拨中心、配送站之间都有容量约束。最大流可以估算当前网络最多能履约多少订单，并辅助定位瓶颈。</p>
+          <p><span class="tag green">仓配网络</span><span class="tag orange">履约上限</span><span class="tag purple">瓶颈识别</span></p>
+        </div>
+        <div class="mini">
+          <h3>库存与需求分配</h3>
+          <p>库存节点到区域需求节点的分配，可以用最大流判断满足量。如果再考虑成本、时效或收益，就会自然升级为最小费用流。</p>
+          <p><span class="tag">库存</span><span class="tag green">需求满足</span><span class="tag red">缺口诊断</span></p>
+        </div>
+        <div class="mini">
+          <h3>服务容量评估</h3>
+          <p>入口、服务集群和下游依赖可以抽象成网络，边容量表示 QPS 或处理上限。最大流给出系统吞吐的结构性上界。</p>
+          <p><span class="tag orange">服务架构</span><span class="tag purple">QPS</span><span class="tag">容量规划</span></p>
+        </div>
+        <div class="mini">
+          <h3>匹配与派单</h3>
+          <p>司机和订单、人员和任务、商品和展位的一对一或一对多关系，都可以用容量边表达可行匹配数量。</p>
+          <p><span class="tag green">匹配</span><span class="tag">派单</span><span class="tag red">资源分配</span></p>
+        </div>
+      </div>
+
+      <div class="box warn">
+        <span class="label">边界</span>
+        <p>最大流擅长回答“在容量约束下最多能满足多少”。它不直接处理复杂时间窗、非线性成本、动态反馈、多目标权衡、车辆路径顺序依赖等问题。这些通常需要最小费用流、整数规划、车辆路径算法、启发式搜索或仿真优化。</p>
+      </div>
+    </section>
+
+    <section id="mcmf" class="card">
+      <h2>八、通向最小费用最大流</h2>
+      <p>最大流只关心最多能送多少，但业务里经常还要问：在满足尽量多需求的前提下，怎样成本最低、时效最好或收益最高。</p>
+      <div class="formula formula-block">最大流：capacity
+最小费用最大流：capacity + cost</div>
+      <table>
+        <thead><tr><th>问题</th><th>边属性</th><th>目标</th><th>业务含义</th></tr></thead>
+        <tbody>
+          <tr><td>二分图匹配</td><td>可行关系，容量多为 1</td><td>最大匹配数量</td><td>最多能配成多少对。</td></tr>
+          <tr><td>最大流</td><td>容量</td><td>最大通过量</td><td>最多能满足多少需求。</td></tr>
+          <tr><td>最小费用最大流</td><td>容量 + 单位成本</td><td>最大流量下成本最低</td><td>既要满足需求，也要控制成本或收益。</td></tr>
+        </tbody>
+      </table>
+      <blockquote>最小费用最大流不是另起炉灶，而是在最大流的残量网络上继续引入费用、势能和最短路思想。</blockquote>
+      <div class="summary">
+        最小学习闭环：能解释“反向边为什么代表撤销历史流量”，能说明“没有增广路径为什么对应一个最小割”，再能把供给、需求、路径和容量翻译成图，最大流的核心就已经站稳了。
+      </div>
+    </section>
+  </main>
+</body>
+</html>

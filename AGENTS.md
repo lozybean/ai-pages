@@ -118,6 +118,8 @@ Use `pre > code` for code snippets and `pre` or `.diagram` for monospace diagram
 
 Use `.map-line` with `.node` and `.arrow` for flow diagrams. Nodes should remain flat: solid soft background, border, no shadows or gradients.
 
+For complex network diagrams, especially graphs with branches, directed edges, capacities, bottlenecks, residual edges, or multiple paths, prefer inline SVG over `pre`, `.diagram`, or `.map-line`. Monospace diagrams often collapse visually after responsive wrapping and are hard to scan on mobile. Inline SVG should be self-contained in the HTML, use the shared palette where possible (`#fffdf8`, `#e4dbcf`, `#8a5a35`, `#9f4d3f`, `#6f675f`), include `role="img"` plus a meaningful `aria-label`, and set `viewBox` with `width="100%"` so it scales without horizontal overflow. Use circles or simple rounded shapes for nodes, arrow markers for direction, edge labels for capacity/cost, and a subtle accent color to highlight bottleneck or critical edges. Keep the SVG flat; avoid shadows, gradients, and decorative complexity.
+
 Use `.score` for compact table judgments such as "高", "中", or "低". Scores should be text emphasis only, without solid background blocks.
 
 When a single article needs page-specific card coloring, prefer adding one body-level page class and writing scoped shared CSS rules, rather than reintroducing a local `<style>` block.
