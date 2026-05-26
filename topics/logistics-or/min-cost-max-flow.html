@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>最小成本最大流算法：应用场景、建模原理与主要算法</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <div class="eyebrow">物流运筹 · 网络流 · 成本优化</div>
+      <h1>最小成本最大流算法：应用场景、建模原理与主要算法</h1>
+      <p class="intro">最小成本最大流在最大流的容量约束之上，为每条边增加单位费用。它回答的问题不是单纯“最多能送多少”，而是“在尽可能多满足需求的前提下，怎样让总成本最低”。</p>
+      <div class="meta"><span class="tag">最小费用流</span><span class="tag">最大流</span><span class="tag">残量网络</span><span class="tag">最短路增广</span><span class="tag">物流调度</span></div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#question">一、它解决什么问题</a>
+      <a href="#applications">二、典型应用场景</a>
+      <a href="#model">三、网络建模方式</a>
+      <a href="#residual">四、残量网络与费用</a>
+      <a href="#algorithms">五、主要算法</a>
+      <a href="#example">六、任务分配例子</a>
+      <a href="#compare">七、和相关算法的关系</a>
+      <a href="#checklist">八、建模检查清单</a>
+    </nav>
+
+    <section id="question" class="card">
+      <h2>一、它解决什么问题</h2>
+      <p>最大流只关心从源点 <code>s</code> 到汇点 <code>t</code> 最多能送出多少流量。最小成本最大流在此基础上进一步考虑：每条边通过 1 单位流量要付出多少成本。</p>
+      <blockquote>最小成本最大流的目标是：先让总流量最大；在所有最大流方案中，再选择总费用最小的一种。</blockquote>
+      <div class="formula formula-block">最大化 flow
+在 flow 最大的前提下，最小化 total_cost = sum(flow(e) * cost(e))</div>
+      <p>这类问题特别适合描述“资源分配 + 容量约束 + 成本优化”的场景。它比普通最大流多了费用目标，比普通最短路多了多单位流量和容量约束。</p>
+      <div class="grid2">
+        <div class="box note">
+          <span class="label">最大流视角</span>
+          <p>关注是否能满足尽可能多的需求，例如最多能发出多少货、完成多少任务、匹配多少订单。</p>
+        </div>
+        <div class="box good">
+          <span class="label green">费用流视角</span>
+          <p>在满足量已经尽可能大的前提下，进一步选择运输成本、等待成本、惩罚成本或机会成本最低的方案。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="applications" class="card">
+      <h2>二、典型应用场景</h2>
+      <p>只要一个业务问题同时出现“供给、需求、容量、单位成本、最大满足量”这些元素，就可以尝试把它转成最小成本最大流。</p>
+      <div class="summary-grid">
+        <article class="mini-card">
+          <div class="card-head"><h4>运输与调拨</h4><span class="tag orange">物流</span></div>
+          <p>仓库、城市、分拨中心、门店之间有路线容量和运输单价。目标是尽可能满足需求，同时让总运费最低。</p>
+        </article>
+        <article class="mini-card">
+          <div class="card-head"><h4>订单履约分仓</h4><span class="tag green">履约</span></div>
+          <p>订单可以由不同仓库履约，每个仓有库存和产能限制，不同“仓-订单”组合的运费、时效惩罚不同。</p>
+        </article>
+        <article class="mini-card">
+          <div class="card-head"><h4>任务与人员分配</h4><span class="tag purple">指派</span></div>
+          <p>人员、机器、车辆或服务节点可以执行多个任务，每个组合有不同成本。费用流可以自然支持一对多和容量上限。</p>
+        </article>
+        <article class="mini-card">
+          <div class="card-head"><h4>排班与时段资源</h4><span class="tag red">调度</span></div>
+          <p>把时间段、班次、人力需求和加班成本建成网络，选择满足需求且总成本较低的排班方案。</p>
+        </article>
+        <article class="mini-card">
+          <div class="card-head"><h4>网络路由与带宽分配</h4><span class="tag">网络</span></div>
+          <p>多条路径有不同带宽容量和传输成本，需要在最大传输量下控制总体路由成本。</p>
+        </article>
+        <article class="mini-card">
+          <div class="card-head"><h4>最大收益选择</h4><span class="tag orange">收益</span></div>
+          <p>如果边权表示收益，可以把收益取负数，转化为最小成本问题；最小负成本就对应最大收益。</p>
+        </article>
+      </div>
+      <div class="summary">
+        直觉判断句式：如果问题可以表述为“在尽可能满足需求的前提下，让总成本最低”，它大概率可以用最小成本最大流建模，或者至少可以作为一个很好的基线模型。
+      </div>
+    </section>
+
+    <section id="model" class="card">
+      <h2>三、网络建模方式</h2>
+      <p>最小成本最大流的输入是一个有向图。每条边同时带有容量和单位费用：</p>
+      <div class="formula formula-block">edge(u, v):
+  capacity = cap(u, v)
+  cost = cost(u, v)
+  flow = f(u, v)</div>
+      <p>容量决定这条边最多能承载多少流，费用决定每通过 1 单位流要付出多少代价。</p>
+
+      <h3>1. 常见建模骨架</h3>
+      <div class="map-line" aria-label="最小成本最大流建模骨架">
+        <span class="node">源点<br /><small>总供给入口</small></span>
+        <span class="arrow">-></span>
+        <span class="node">供给侧<br /><small>仓 / 人 / 车 / 机器</small></span>
+        <span class="arrow">-></span>
+        <span class="node">决策边<br /><small>可行关系 + 单位成本</small></span>
+        <span class="arrow">-></span>
+        <span class="node">需求侧<br /><small>订单 / 任务 / 门店</small></span>
+        <span class="arrow">-></span>
+        <span class="node">汇点<br /><small>总需求出口</small></span>
+      </div>
+
+      <h3>2. 边的含义</h3>
+      <table>
+        <thead><tr><th>边</th><th>容量</th><th>费用</th><th>业务含义</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> supply</code></td><td>供给上限</td><td>通常为 0</td><td>仓库库存、人员可用次数、车辆可用载重。</td></tr>
+          <tr><td><code>supply -> demand</code></td><td>可分配上限</td><td>单位成本</td><td>某个供给服务某个需求的运费、耗时、惩罚或负收益。</td></tr>
+          <tr><td><code>demand -> t</code></td><td>需求量</td><td>通常为 0</td><td>订单、任务、门店或时段需要被满足的数量。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>3. 最大流和指定流量的差别</h3>
+      <p>有时业务要求“尽可能满足”，这就是最小成本最大流；有时业务要求“必须送出 K 单位流”，则是指定流量的最小费用流。</p>
+      <div class="grid2">
+        <div class="box">
+          <span class="label">最小成本最大流</span>
+          <p>算法持续增广，直到无法再从源点到汇点送流。返回最大流量以及这个最大流量下的最低费用。</p>
+        </div>
+        <div class="box">
+          <span class="label">指定流量最小费用流</span>
+          <p>算法只需要送出目标流量 <code>K</code>。如果送不到 <code>K</code>，说明约束下需求不可完全满足。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="residual" class="card">
+      <h2>四、残量网络与费用</h2>
+      <p>最小成本最大流同样依赖残量网络。每条正向边都会配一条反向边：</p>
+      <div class="formula formula-block">正向边 u -> v:
+  residual_capacity = cap - flow
+  cost = c
+
+反向边 v -> u:
+  residual_capacity = flow
+  cost = -c</div>
+      <p>反向边的费用为负数，表示撤销 1 单位原来的流量，可以把此前支付的费用退回来。</p>
+      <div class="box warn">
+        <span class="label">关键点</span>
+        <p>反向边不是现实业务中的反向运输，而是算法层面的“撤销与重排”。费用流的最优性正是依靠这种可反悔机制实现的。</p>
+      </div>
+
+      <h3>为什么每次找最短费用增广路</h3>
+      <p>在残量网络中，一条从 <code>s</code> 到 <code>t</code> 的路径代表一种可以继续增加总流量的调整方式。路径费用是这次增加 1 单位流量的边际成本。</p>
+      <div class="formula formula-block">path_cost = sum(cost(e)), e 属于增广路径</div>
+      <p>因此，最短费用增广路就是当前所有可增广方案中，边际成本最低的一种。沿它增加尽可能多的流量，再更新残量网络，重复这个过程，就能逐步构造低成本的最大流。</p>
+
+      <svg role="img" aria-label="费用流残量网络示意图，正向边容量 5 费用 3，已用 2 后反向边容量 2 费用 -3" viewBox="0 0 760 230" width="100%">
+        <defs>
+          <marker id="mcmf-arrow-forward" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+          <marker id="mcmf-arrow-back" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#9f4d3f"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="758" height="228" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <circle cx="190" cy="115" r="42" fill="#fffdf8" stroke="#d9c6b1" stroke-width="3"></circle>
+        <circle cx="570" cy="115" r="42" fill="#fffdf8" stroke="#d9c6b1" stroke-width="3"></circle>
+        <text x="190" y="121" fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="26" font-weight="800" text-anchor="middle">u</text>
+        <text x="570" y="121" fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="26" font-weight="800" text-anchor="middle">v</text>
+        <path d="M235 91 C335 38, 425 38, 525 91" fill="none" stroke="#8a5a35" stroke-width="4" marker-end="url(#mcmf-arrow-forward)"></path>
+        <path d="M525 139 C425 192, 335 192, 235 139" fill="none" stroke="#9f4d3f" stroke-width="4" stroke-dasharray="8 8" marker-end="url(#mcmf-arrow-back)"></path>
+        <text x="380" y="52" fill="#8a5a35" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="800" text-anchor="middle">正向剩余容量 3，费用 +3</text>
+        <text x="380" y="190" fill="#9f4d3f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="800" text-anchor="middle">反向可撤销容量 2，费用 -3</text>
+        <text x="380" y="116" fill="#6f675f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" text-anchor="middle">原边容量 5，单位费用 3，当前已有 2 单位流</text>
+      </svg>
+    </section>
+
+    <section id="algorithms" class="card">
+      <h2>五、主要算法</h2>
+      <p>最小成本最大流最常见的实现路线是“连续找最短费用增广路”。不同算法的差异主要在于如何在残量网络中找到这条最短路。</p>
+
+      <h3>1. SPFA 最短路增广</h3>
+      <p>SPFA 版本最容易理解，也最常作为入门实现。因为残量网络中会出现负费用反向边，所以不能直接用普通 Dijkstra。</p>
+      <div class="formula formula-block">while 存在 s 到 t 的最短费用路径:
+    delta = 路径上的最小剩余容量
+    沿路径增广 delta
+    total_flow += delta
+    total_cost += delta * path_cost</div>
+      <table>
+        <thead><tr><th>特点</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>优点</td><td>代码直观，能处理负边权，适合中小规模问题和学习推导。</td></tr>
+          <tr><td>缺点</td><td>最坏复杂度不稳定，在大图或特殊数据上容易变慢。</td></tr>
+          <tr><td>适合</td><td>教学、竞赛小数据、业务原型、需要快速验证建模正确性的场景。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>2. Dijkstra + 势能优化</h3>
+      <p>更稳定的工程实现通常使用势能，也叫 potential。它把每条边的费用调整成非负的 reduced cost，从而可以用 Dijkstra 快速找最短路。</p>
+      <div class="formula formula-block">reduced_cost(u, v) = cost(u, v) + potential[u] - potential[v]</div>
+      <p>势能调整不会改变路径之间的真实优劣关系，但可以让算法避开负边权带来的 Dijkstra 限制。</p>
+      <div class="grid2">
+        <div class="box good">
+          <span class="label green">优势</span>
+          <p>在稀疏图上通常比 SPFA 稳定，适合规模更大的费用流问题。</p>
+        </div>
+        <div class="box note">
+          <span class="label">成本</span>
+          <p>实现复杂度更高，需要正确维护初始势能、最短距离和每轮更新。</p>
+        </div>
+      </div>
+
+      <h3>3. 原始对偶算法</h3>
+      <p>Dijkstra + 势能优化通常也被称为原始对偶方法。它一边维护当前流这个原始解，一边维护势能这个对偶信息，通过最短增广路逐步满足最优性条件。</p>
+      <blockquote>直观理解：原始对偶算法不是盲目找便宜路径，而是在一套价格体系下寻找仍然值得增广的路径，并持续修正这套价格体系。</blockquote>
+
+      <h3>4. 负环消除算法</h3>
+      <p>另一类思路是先找到一个最大流，然后检查残量网络中是否存在负费用环。如果存在，就沿负环调整流量，降低总费用；直到没有负环，当前最大流就是最小费用最大流。</p>
+      <div class="formula formula-block">先求任意最大流
+while 残量网络存在负费用环:
+    沿负环调整可行流量
+    降低 total_cost</div>
+      <p>这种方法理论直观，但工程中不如最短路增广常用，因为负环检测和调整的实现成本较高。</p>
+    </section>
+
+    <section id="example" class="card">
+      <h2>六、任务分配例子</h2>
+      <p>假设有两个工人 <code>A</code>、<code>B</code>，两个任务 <code>X</code>、<code>Y</code>。每个工人最多做一个任务，每个任务需要一个人完成。成本如下：</p>
+      <table>
+        <thead><tr><th>工人</th><th>任务 X</th><th>任务 Y</th></tr></thead>
+        <tbody>
+          <tr><td>A</td><td>3</td><td>1</td></tr>
+          <tr><td>B</td><td>2</td><td>4</td></tr>
+        </tbody>
+      </table>
+
+      <h3>1. 建图</h3>
+      <div class="formula formula-block">s -> A, B: capacity = 1, cost = 0
+A -> X: capacity = 1, cost = 3
+A -> Y: capacity = 1, cost = 1
+B -> X: capacity = 1, cost = 2
+B -> Y: capacity = 1, cost = 4
+X, Y -> t: capacity = 1, cost = 0</div>
+
+      <h3>2. 最优结果</h3>
+      <div class="good">
+        <strong>最优分配：</strong>A 做 Y，成本 1；B 做 X，成本 2。最大流量为 2，总成本为 3。
+      </div>
+      <p>这个例子看起来可以人工算出来，但当工人、任务、容量、班次、时效惩罚和禁配关系同时存在时，费用流的建模优势会变得明显。</p>
+
+      <h3>3. 为什么不是简单贪心</h3>
+      <p>如果只按单条边从小到大选，可能会先占用某个任务，导致后续更高成本。费用流通过残量网络允许撤销已有匹配，从而在整体上重新组合。</p>
+      <div class="box warn">
+        <span class="label">建模提醒</span>
+        <p>费用流保证的是你建模后的线性目标最优。真实业务中的非线性成本、时间窗顺序、路径依赖和多目标偏好，可能需要扩展模型或改用整数规划、车辆路径算法、启发式搜索。</p>
+      </div>
+    </section>
+
+    <section id="compare" class="card">
+      <h2>七、和相关算法的关系</h2>
+      <table>
+        <thead><tr><th>问题</th><th>核心目标</th><th>是否考虑费用</th><th>适用范围</th></tr></thead>
+        <tbody>
+          <tr><td>最大流</td><td>流量最大</td><td>否</td><td>容量瓶颈、最大满足量、可行性上界。</td></tr>
+          <tr><td>最小费用流</td><td>指定流量下费用最小</td><td>是</td><td>需要送出固定数量 <code>K</code> 的低成本方案。</td></tr>
+          <tr><td>最小成本最大流</td><td>先最大流，再最小费用</td><td>是</td><td>需求不一定全满足，要在最大满足量下压低成本。</td></tr>
+          <tr><td>二分图匹配</td><td>匹配数量最大</td><td>通常否</td><td>一对一可行匹配，常可转成最大流。</td></tr>
+          <tr><td>匈牙利 / KM 算法</td><td>一对一最优匹配</td><td>是</td><td>结构更特化，适合标准指派或最大权完美匹配。</td></tr>
+        </tbody>
+      </table>
+      <div class="summary">
+        可以把最小成本最大流理解成网络流建模中的通用升级版：最大流回答“能满足多少”，费用流进一步回答“用什么代价满足”。
+      </div>
+    </section>
+
+    <section id="checklist" class="card">
+      <h2>八、建模检查清单</h2>
+      <p>费用流的难点通常不在算法代码，而在把业务问题翻译成网络。建模时可以逐项检查：</p>
+      <div class="grid2">
+        <div class="box">
+          <span class="label">节点</span>
+          <ul>
+            <li>哪些是供给方，哪些是需求方？</li>
+            <li>是否需要增加中间层表达时间、区域、SKU 或状态？</li>
+            <li>源点和汇点是否清晰？</li>
+          </ul>
+        </div>
+        <div class="box">
+          <span class="label">边</span>
+          <ul>
+            <li>一条边代表什么可行关系？</li>
+            <li>容量表示库存、产能、次数、载重还是需求量？</li>
+            <li>费用是否是每单位流量的线性成本？</li>
+          </ul>
+        </div>
+        <div class="box">
+          <span class="label">目标</span>
+          <ul>
+            <li>是尽可能多满足，还是必须满足固定流量？</li>
+            <li>收益是否需要转成负成本？</li>
+            <li>多目标是否已经转换成单一线性费用？</li>
+          </ul>
+        </div>
+        <div class="box">
+          <span class="label">边界</span>
+          <ul>
+            <li>是否存在非线性成本或路径顺序依赖？</li>
+            <li>是否需要整数变量之外的复杂业务规则？</li>
+            <li>是否需要滚动优化而非一次性静态求解？</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <footer><p>相关延伸：最大流总览、Ford-Fulkerson、Edmonds-Karp、Dinic、二分图匹配、匈牙利算法和 KM 算法共同构成网络流与指派问题的基础工具箱。</p></footer>
+  </main>
+</body>
+</html>
