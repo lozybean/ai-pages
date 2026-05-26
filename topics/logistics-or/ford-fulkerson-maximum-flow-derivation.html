@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ford-Fulkerson 算法：从朴素推流到残量网络</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <div class="eyebrow">物流运筹 · 最大流推导</div>
+      <h1>Ford-Fulkerson 算法：从朴素推流到残量网络</h1>
+      <p class="intro">这一篇专门展开最大流算法的基本推导：为什么“找到路就送流”的贪心会卡住，为什么残量网络必须有反向边，沿反向边走到底在撤销什么，以及最大流最小割定理如何解释算法终止时的正确性。</p>
+      <div class="meta"><span class="tag">Ford-Fulkerson</span><span class="tag">残量网络</span><span class="tag">反向边</span><span class="tag">增广路径</span><span class="tag">最大流最小割</span></div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#goal">一、Ford-Fulkerson 在解决什么</a>
+      <a href="#greedy">二、从朴素推流开始</a>
+      <a href="#case">三、一个会“选错路”的网络</a>
+      <a href="#residual">四、残量网络与反向边</a>
+      <a href="#augment">五、用反向边完成重排</a>
+      <a href="#cut">六、最大流最小割如何出现</a>
+      <a href="#algorithm">七、算法流程与实现含义</a>
+      <a href="#limits">八、复杂度与学习边界</a>
+    </nav>
+
+    <section id="goal" class="card">
+      <h2>一、Ford-Fulkerson 在解决什么</h2>
+      <p>最大流问题给定一个有向网络，每条边有容量，从源点 <code>s</code> 到汇点 <code>t</code>，目标是找到能送到 <code>t</code> 的最大总流量。</p>
+      <div class="formula formula-block">目标：maximize |f|
+
+容量约束：0 <= f(u, v) <= c(u, v)
+流量守恒：除 s 和 t 外，每个中间点流入量 = 流出量</div>
+      <blockquote>Ford-Fulkerson 的核心不是“找一条最好的路”，而是在一个动态变化的残量网络里，不断寻找还能让总流量增加的调整方案。</blockquote>
+      <p>这句话里有两个关键词：<strong>增广路径</strong>和<strong>残量网络</strong>。前者表示还能让总流量增加的路径，后者表示当前流量状态下还能继续增加或撤销的空间。</p>
+    </section>
+
+    <section id="greedy" class="card">
+      <h2>二、从朴素推流开始</h2>
+      <p>最自然的算法思路是：</p>
+      <div class="map-line" aria-label="朴素推流流程">
+        <span class="node">找一条 s 到 t 的路径</span>
+        <span class="arrow">-></span>
+        <span class="node">计算路径瓶颈容量</span>
+        <span class="arrow">-></span>
+        <span class="node">沿整条路径送流</span>
+        <span class="arrow">-></span>
+        <span class="node">重复直到没有路</span>
+      </div>
+      <p>如果路径 <code>P</code> 上的剩余容量分别是 <code>5, 2, 4</code>，那么这条路径一次最多只能增加：</p>
+      <div class="formula formula-block">delta = min(5, 2, 4) = 2</div>
+      <p>这个想法本身没错，问题出在“没有路”到底是什么意思。如果只在原图剩余容量里看路，早期路径选择可能让图看起来堵死；但如果允许撤销和重排历史流量，实际还可以继续增加。</p>
+    </section>
+
+    <section id="case" class="card">
+      <h2>三、一个会“选错路”的网络</h2>
+      <p>看下面这个网络。源点有两条出边，总供给能力是 <code>4 + 4 = 8</code>；汇点有两条入边，总接收能力也是 <code>4 + 4 = 8</code>。真正的瓶颈不在源点或汇点，而在中间从左半区跨到右半区的两条边。</p>
+
+      <svg role="img" aria-label="Ford-Fulkerson 示例原始网络：s 到 A 容量 4，s 到 B 容量 4，A 到 B 容量 3，A 到 C 容量 2，B 到 D 容量 3，C 到 t 容量 4，D 到 t 容量 4" viewBox="0 0 860 420" width="100%" style="display:block; margin: 18px 0; max-width: 860px;">
+        <defs>
+          <marker id="ff-arrow-main" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="858" height="418" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g stroke="#8a5a35" stroke-width="4" fill="none" marker-end="url(#ff-arrow-main)">
+          <line x1="118" y1="210" x2="252" y2="128"></line>
+          <line x1="118" y1="210" x2="252" y2="292"></line>
+          <line x1="286" y1="152" x2="286" y2="268"></line>
+          <line x1="326" y1="116" x2="544" y2="116"></line>
+          <line x1="326" y1="304" x2="544" y2="304"></line>
+          <line x1="616" y1="116" x2="742" y2="198"></line>
+          <line x1="616" y1="304" x2="742" y2="222"></line>
+        </g>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="82" cy="210" r="36"></circle>
+          <circle cx="286" cy="116" r="36"></circle>
+          <circle cx="286" cy="304" r="36"></circle>
+          <circle cx="580" cy="116" r="36"></circle>
+          <circle cx="580" cy="304" r="36"></circle>
+          <circle cx="778" cy="210" r="36"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="23" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="82" y="210">s</text>
+          <text x="286" y="116">A</text>
+          <text x="286" y="304">B</text>
+          <text x="580" y="116">C</text>
+          <text x="580" y="304">D</text>
+          <text x="778" y="210">t</text>
+        </g>
+        <g fill="#8a5a35" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="850" text-anchor="middle">
+          <text x="176" y="146">4</text>
+          <text x="176" y="290">4</text>
+          <text x="318" y="214">3</text>
+          <text x="432" y="96">2</text>
+          <text x="432" y="330">3</text>
+          <text x="674" y="142">4</text>
+          <text x="674" y="304">4</text>
+        </g>
+        <text x="430" y="382" fill="#6f675f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" text-anchor="middle">容量标在边旁边；源点和汇点两侧都不是瓶颈，内部跨区边 A -> C 与 B -> D 才是瓶颈。</text>
+      </svg>
+
+      <p>一眼看上去，最优方案应该是：</p>
+      <div class="formula formula-block">s -> A -> C -> t：送 2
+s -> B -> D -> t：送 3
+总流量 = 5</div>
+      <p>但是 Ford-Fulkerson 允许“任意找一条增广路径”。如果第一步路径选得不好，它会先走一条看似可行、但占用了中间关键边的路。</p>
+    </section>
+
+    <section id="residual" class="card">
+      <h2>四、残量网络与反向边</h2>
+      <p>假设第一轮选择了这条路径：</p>
+      <div class="formula formula-block">P1 = s -> A -> B -> D -> t
+delta = min(4, 3, 3, 4) = 3</div>
+      <p>推完以后，真实流量是：</p>
+      <div class="formula formula-block">s -> A: 3 / 4
+A -> B: 3 / 3
+B -> D: 3 / 3
+D -> t: 3 / 4
+当前总流量 |f| = 3</div>
+      <p>此时 <code>A -> B</code> 和 <code>B -> D</code> 都满了。如果只看原图正向剩余容量，就会觉得 <code>B -> D</code> 这条跨区通道已经被错误路径占掉，后续来自 <code>s -> B</code> 的供给很难再穿过中间瓶颈。</p>
+
+      <h3>1. 残量网络记录两类能力</h3>
+      <div class="grid2">
+        <div class="box note">
+          <span class="label">还能继续增加多少</span>
+          <p>原边 <code>u -> v</code> 还有 <code>c - f</code> 的正向残量，表示还能继续往前推多少。</p>
+        </div>
+        <div class="box example">
+          <span class="label">最多能撤销多少</span>
+          <p>如果原边已经有 <code>f</code> 单位真实流量，残量网络中就有 <code>v -> u</code> 的反向残量 <code>f</code>。</p>
+        </div>
+      </div>
+      <div class="formula formula-block">正向残量：res(u, v) = c(u, v) - f(u, v)
+反向残量：res(v, u) = f(u, v)</div>
+
+      <h3>2. 第一轮之后的关键残量</h3>
+      <p>第一轮之后，和后续调整有关的残量边包括：</p>
+      <table>
+        <thead><tr><th>残量边</th><th>残量</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> A</code></td><td>1</td><td><code>s -> A</code> 还可以再送 1。</td></tr>
+          <tr><td><code>s -> B</code></td><td>4</td><td><code>s -> B</code> 还完全没用。</td></tr>
+          <tr><td><code>B -> A</code></td><td>3</td><td>可以撤销原来 <code>A -> B</code> 上的 3 单位流。</td></tr>
+          <tr><td><code>A -> C</code></td><td>2</td><td><code>A -> C</code> 还完全没用。</td></tr>
+          <tr><td><code>C -> t</code></td><td>4</td><td><code>C -> t</code> 还完全没用。</td></tr>
+        </tbody>
+      </table>
+      <blockquote>反向边不是现实中的“货物倒流”，而是算法里的撤销权：沿 <code>B -> A</code> 走 1 单位，等价于把原来的 <code>A -> B</code> 真实流量减少 1。</blockquote>
+    </section>
+
+    <section id="augment" class="card">
+      <h2>五、用反向边完成重排</h2>
+      <p>第一轮之后，继续找增广路径。先还可以走：</p>
+      <div class="formula formula-block">P2 = s -> A -> C -> t
+delta = min(1, 2, 4) = 1</div>
+      <p>推完以后，当前总流量变成 <code>4</code>。此时 <code>s -> A</code> 已满，但 <code>s -> B</code> 还有 4；真正的问题是：<code>B -> D</code> 这条跨区边已经被第一轮占满了。</p>
+
+      <h3>关键的第三轮增广</h3>
+      <p>残量网络中出现一条非常重要的路径：</p>
+      <div class="formula formula-block">P3 = s -> B -> A -> C -> t
+delta = min(4, 3, 1, 3) = 1</div>
+      <p>其中 <code>B -> A</code> 不是原图的真实边，而是 <code>A -> B</code> 的反向残量边。沿这条路径推 1，含义是：</p>
+      <table>
+        <thead><tr><th>路径边</th><th>动作</th><th>真实流量变化</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> B</code></td><td>走正向边</td><td><code>s -> B</code> 增加 1。</td></tr>
+          <tr><td><code>B -> A</code></td><td>走反向边</td><td>撤销 <code>A -> B</code> 上的 1。</td></tr>
+          <tr><td><code>A -> C</code></td><td>走正向边</td><td><code>A -> C</code> 再增加 1。</td></tr>
+          <tr><td><code>C -> t</code></td><td>走正向边</td><td><code>C -> t</code> 再增加 1。</td></tr>
+        </tbody>
+      </table>
+
+      <p>最终真实流量变成：</p>
+      <div class="formula formula-block">s -> A: 4 / 4
+s -> B: 1 / 4
+A -> B: 2 / 3
+A -> C: 2 / 2
+B -> D: 3 / 3
+C -> t: 2 / 4
+D -> t: 3 / 4
+
+总流量 |f| = 5</div>
+      <div class="summary">残量网络中的路径 <code>s -> B -> A -> C -> t</code> 不是最终真实业务路径。它是一套调整动作：让 B 接住来自 s 的新流量，同时把 A 原先错误送给 B 的流量撤回来，改送给 C。</div>
+    </section>
+
+    <section id="cut" class="card">
+      <h2>六、最大流最小割证明过程</h2>
+      <p>现在总流量已经达到 5。注意，这次不能再用“源点出边总容量”或“汇点入边总容量”直接解释，因为它们都是 8，明显大于当前流量。真正限制网络的是中间跨区边。</p>
+
+      <h3>1. 先看终止时的残量网络</h3>
+      <p>最终真实流量确定后，把每条边换算成正向残量和反向残量。和可达性有关的关键残量如下：</p>
+      <table>
+        <thead><tr><th>残量边</th><th>残量</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> A</code></td><td>0</td><td><code>s -> A</code> 已满，不能从 <code>s</code> 直接走到 <code>A</code>。</td></tr>
+          <tr><td><code>s -> B</code></td><td>3</td><td><code>s -> B</code> 还可走，所以 <code>B</code> 从 <code>s</code> 可达。</td></tr>
+          <tr><td><code>B -> A</code></td><td>2</td><td>这是 <code>A -> B</code> 的反向残量，所以 <code>A</code> 也从 <code>s</code> 可达。</td></tr>
+          <tr><td><code>A -> C</code></td><td>0</td><td>跨向右半区的上边已经满流。</td></tr>
+          <tr><td><code>B -> D</code></td><td>0</td><td>跨向右半区的下边也已经满流。</td></tr>
+        </tbody>
+      </table>
+      <p>因此，残量网络中从 <code>s</code> 出发，最多只能到达 <code>B</code> 和 <code>A</code>，无法继续进入 <code>C</code>、<code>D</code> 或 <code>t</code>。</p>
+
+      <svg role="img" aria-label="最大流最小割证明图：割把 s、A、B 放在左侧，把 C、D、t 放在右侧，跨割边 A 到 C 容量 2 与 B 到 D 容量 3，总割容量为 5" viewBox="0 0 860 420" width="100%" style="display:block; margin: 18px 0; max-width: 860px;">
+        <defs>
+          <marker id="ff-cut-arrow-main" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="858" height="418" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <line x1="430" y1="54" x2="430" y2="344" stroke="#9f4d3f" stroke-width="2" stroke-dasharray="8 8"></line>
+        <text x="430" y="44" fill="#9f4d3f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="850" text-anchor="middle">割容量：2 + 3 = 5</text>
+        <text x="224" y="374" fill="#6f675f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="800" text-anchor="middle">S = {s, A, B}</text>
+        <text x="638" y="374" fill="#6f675f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="800" text-anchor="middle">T = {C, D, t}</text>
+        <g stroke="#8a5a35" stroke-width="4" fill="none" marker-end="url(#ff-cut-arrow-main)">
+          <line x1="118" y1="210" x2="252" y2="128"></line>
+          <line x1="118" y1="210" x2="252" y2="292"></line>
+          <line x1="286" y1="152" x2="286" y2="268"></line>
+          <line x1="326" y1="116" x2="544" y2="116"></line>
+          <line x1="326" y1="304" x2="544" y2="304"></line>
+          <line x1="616" y1="116" x2="742" y2="198"></line>
+          <line x1="616" y1="304" x2="742" y2="222"></line>
+        </g>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="82" cy="210" r="36"></circle>
+          <circle cx="286" cy="116" r="36"></circle>
+          <circle cx="286" cy="304" r="36"></circle>
+          <circle cx="580" cy="116" r="36"></circle>
+          <circle cx="580" cy="304" r="36"></circle>
+          <circle cx="778" cy="210" r="36"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="23" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="82" y="210">s</text>
+          <text x="286" y="116">A</text>
+          <text x="286" y="304">B</text>
+          <text x="580" y="116">C</text>
+          <text x="580" y="304">D</text>
+          <text x="778" y="210">t</text>
+        </g>
+        <g fill="#8a5a35" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="850" text-anchor="middle">
+          <text x="176" y="146">4</text>
+          <text x="176" y="290">4</text>
+          <text x="318" y="214">3</text>
+          <text x="432" y="96">2</text>
+          <text x="432" y="330">3</text>
+          <text x="674" y="142">4</text>
+          <text x="674" y="304">4</text>
+        </g>
+      </svg>
+
+      <h3>2. 从终止时的残量可达点构造割</h3>
+      <p>最终状态下，残量网络中从 <code>s</code> 出发，仍然可以到达 <code>B</code>，再通过反向边 <code>B -> A</code> 到达 <code>A</code>。但从 <code>A</code> 到 <code>C</code>、从 <code>B</code> 到 <code>D</code> 都已经没有正向残量，所以无法进入右半区。</p>
+      <div class="formula formula-block">S = {s, A, B}
+T = {C, D, t}</div>
+      <p>从 <code>S</code> 指向 <code>T</code> 的原图边就是：</p>
+      <div class="formula formula-block">A -> C，容量 2
+B -> D，容量 3
+割容量 = 2 + 3 = 5</div>
+
+      <h3>3. 为什么这就是最小割</h3>
+      <p>任意从 <code>s</code> 到 <code>t</code> 的流量都必须穿过任何一个割，所以：</p>
+      <div class="formula formula-block">任意可行流 <= 任意割容量</div>
+      <p>现在我们找到一个可行流，流量是 5；同时找到一个割，容量也是 5。因此：</p>
+      <div class="formula formula-block">当前流量 5 <= 最大流 <= 最小割 <= 这个割容量 5
+所以：最大流 = 最小割 = 5</div>
+      <blockquote>Ford-Fulkerson 终止时，“没有增广路径”会自然给出一个割：残量网络里从 <code>s</code> 还能到达的点在一侧，其他点在另一侧。这个割的容量刚好等于当前流量。</blockquote>
+    </section>
+
+    <section id="algorithm" class="card">
+      <h2>七、算法流程与实现含义</h2>
+      <p>Ford-Fulkerson 的完整流程可以写成：</p>
+      <div class="formula formula-block">初始化所有边流量为 0，并建立残量网络
+
+while 残量网络中存在 s 到 t 的路径 P:
+    delta = P 上所有残量边的最小残量
+    沿 P 增广 delta
+    更新每条边和反向边的残量
+
+返回当前总流量</div>
+      <p>实现里通常只维护残量边。每添加一条原始边 <code>u -> v</code>，同时添加一条初始容量为 0 的反向边 <code>v -> u</code>。每次推流时统一更新：</p>
+      <div class="formula formula-block">edge.cap -= delta
+reverse_edge.cap += delta</div>
+      <p>这两行同时覆盖了“新增正向流”和“撤销历史流”。如果走的是正向残量边，就是增加真实流量；如果走的是反向残量边，就是减少对应原边上的真实流量。</p>
+
+      <table>
+        <thead><tr><th>走到的边</th><th>更新后意味着什么</th><th>业务解释</th></tr></thead>
+        <tbody>
+          <tr><td>原图正向边</td><td>正向残量减少，反向残量增加</td><td>这条通道被更多使用，同时获得未来撤销权。</td></tr>
+          <tr><td>反向残量边</td><td>反向残量减少，原正向残量增加</td><td>撤销之前占用的容量，把它让给更合适的组合。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="limits" class="card">
+      <h2>八、复杂度与学习边界</h2>
+      <p>Ford-Fulkerson 是方法框架，不是唯一实现。复杂度取决于每次怎么找增广路径。</p>
+      <table>
+        <thead><tr><th>版本</th><th>找路径方式</th><th>复杂度直觉</th><th>特点</th></tr></thead>
+        <tbody>
+          <tr><td>朴素 Ford-Fulkerson</td><td>DFS 或任意路径</td><td><code>O(E * F)</code></td><td>容易理解，但路径选择差时可能很慢。</td></tr>
+          <tr><td>Edmonds-Karp</td><td>BFS 找边数最少的增广路径</td><td><code>O(V * E^2)</code></td><td>选择规则稳定，适合教学和验证。</td></tr>
+          <tr><td>Dinic</td><td>BFS 分层 + DFS 推阻塞流</td><td>实践表现通常更好</td><td>工程和竞赛中更常用。</td></tr>
+        </tbody>
+      </table>
+      <div class="box warn">
+        <span class="label">理论边界</span>
+        <p>如果容量不是整数，朴素 Ford-Fulkerson 在理论上可能出现不收敛问题。多数业务建模中的订单数、库存数、车辆数、QPS 配额都可以看作整数或离散容量；工程实现中也常选择 Edmonds-Karp 或 Dinic 来获得更稳定的行为。</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
