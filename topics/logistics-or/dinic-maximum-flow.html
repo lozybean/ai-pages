@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dinic 算法：分层图、阻塞流与最大流推导</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <div class="eyebrow">物流运筹 · 最大流算法</div>
+      <h1>Dinic 算法：分层图、阻塞流与最大流推导</h1>
+      <p class="intro">Dinic 是最大流问题中非常常用的算法。它延续 Ford-Fulkerson 的残量网络思想，但不再一条增广路径一条增广路径地慢慢找，而是每轮先用 BFS 构造分层图，再用 DFS 在分层图中尽量推到一个阻塞流。</p>
+      <div class="meta"><span class="tag">Dinic</span><span class="tag">最大流</span><span class="tag">分层图</span><span class="tag">阻塞流</span><span class="tag">当前弧优化</span></div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#problem">一、问题与前置模型</a>
+      <a href="#idea">二、Dinic 的核心思想</a>
+      <a href="#concepts">三、核心概念</a>
+      <a href="#algorithm">四、算法流程</a>
+      <a href="#derive">五、逐轮推导</a>
+      <a href="#why">六、为什么正确</a>
+      <a href="#complexity">七、复杂度直觉</a>
+      <a href="#implementation">八、实现要点</a>
+    </nav>
+
+    <section id="problem" class="card">
+      <h2>一、问题与前置模型</h2>
+      <p>最大流问题给定一个有向容量网络 <code>G = (V, E)</code>，每条边 <code>u -> v</code> 有容量 <code>c(u, v)</code>，要求在源点 <code>s</code> 到汇点 <code>t</code> 之间安排最大可行流。</p>
+      <div class="formula formula-block">容量约束：0 <= f(u, v) <= c(u, v)
+流量守恒：除 s、t 外，每个点的流入 = 流出
+最大流值：|f| = 从 s 流出的总量 = 流入 t 的总量</div>
+      <p>Dinic 仍然工作在残量网络上。对每条原边 <code>u -> v</code>，残量网络同时表达两件事：</p>
+      <table>
+        <thead><tr><th>残量边</th><th>残量容量</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td>正向残量边 <code>u -> v</code></td><td><code>c(u, v) - f(u, v)</code></td><td>还可以继续往这条原边增加多少流。</td></tr>
+          <tr><td>反向残量边 <code>v -> u</code></td><td><code>f(u, v)</code></td><td>最多可以撤销多少已经安排在原边上的流。</td></tr>
+        </tbody>
+      </table>
+      <blockquote>Dinic 的改进点不在于换了最大流模型，而在于每一轮先建立“最短距离方向”，再在这个方向里批量增广。</blockquote>
+    </section>
+
+    <section id="idea" class="card">
+      <h2>二、Dinic 的核心思想</h2>
+      <p>朴素 Ford-Fulkerson 每次只找一条增广路径；Edmonds-Karp 每次用 BFS 找一条边数最少的增广路径；Dinic 则进一步说：既然 BFS 已经得到了从 <code>s</code> 出发的层次关系，那就不要只用其中一条路，而要在这张分层图里一次性尽量多推。</p>
+      <div class="map-line" aria-label="Dinic 思想流程">
+        <span class="node">BFS 分层</span>
+        <span class="arrow">-></span>
+        <span class="node">保留向下一层的边</span>
+        <span class="arrow">-></span>
+        <span class="node">DFS 连续增广</span>
+        <span class="arrow">-></span>
+        <span class="node">得到阻塞流</span>
+        <span class="arrow">-></span>
+        <span class="node">重建分层图</span>
+      </div>
+      <div class="summary">一句话：Dinic 每轮不是找“一条最短增广路”，而是在当前最短层次结构里找“一批互不容易继续扩展的增广路”。</div>
+      <div class="grid2">
+        <div class="box warning">
+          <span class="label">只增广一条路径</span>
+          <p>每次路径选择带来的收益有限，很多边会被反复扫描，尤其在多条短路径并存时显得浪费。</p>
+        </div>
+        <div class="box good">
+          <span class="label">推到阻塞流</span>
+          <p>一轮内尽量把当前层次图里的可用通道推满，让下一轮必须寻找更深的增广结构。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="concepts" class="card">
+      <h2>三、核心概念</h2>
+      <h3>1. 层次与分层图</h3>
+      <p>在残量网络中，从 <code>s</code> 出发做 BFS。若某点第一次被访问时距离为 <code>level[x]</code>，表示它从 <code>s</code> 至少需要经过多少条残量边才能到达。</p>
+      <div class="formula formula-block">level[s] = 0
+如果残量边 u -> v 可走，且 v 未访问：
+level[v] = level[u] + 1</div>
+      <p>分层图只保留满足下列条件的残量边：</p>
+      <div class="formula formula-block">residual(u, v) > 0
+level[v] = level[u] + 1</div>
+      <p>也就是说，DFS 只能沿着层数严格增加的方向走。这样可以避免在一轮内绕圈，也保证当前轮处理的是最短增广路径所在的层次结构。原图中的边不必然属于当前分层图；如果一条边没有从第 <code>k</code> 层指向第 <code>k + 1</code> 层，它这一轮就不能被 DFS 使用。</p>
+
+      <h3>2. 阻塞流</h3>
+      <p>在当前分层图里，如果已经不存在从 <code>s</code> 到 <code>t</code> 的可行路径，就称这一轮得到了一个阻塞流。</p>
+      <blockquote>阻塞流不一定是全局最大流；它只是把当前这张分层图里的所有 s 到 t 通道都堵住了。</blockquote>
+      <p>堵住的原因可能是源点侧的某条边满了，也可能是中间瓶颈满了，还可能是某条边在这一轮不符合分层方向。关键是：这一轮内再沿当前层次方向已经无法继续到达 <code>t</code>。</p>
+
+      <svg role="img" aria-label="阻塞流示意：第一轮分层图中 A 到 B 是同层边，不能使用；A 到 C 与 s 到 B 被堵住后，当前分层图没有 s 到 t 路径，但残量网络下一轮仍可能重建出更长路径" viewBox="0 0 860 420" width="100%" style="display:block; margin: 18px 0; max-width: 860px;">
+        <defs>
+          <marker id="dinic-concept-arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#2f6f68"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="858" height="418" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g fill="#6f675f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="800" text-anchor="middle">
+          <text x="86" y="62">L0</text>
+          <text x="286" y="62">L1</text>
+          <text x="574" y="62">L2</text>
+          <text x="774" y="62">L3</text>
+        </g>
+        <g stroke="#2f6f68" stroke-width="4" fill="none" marker-end="url(#dinic-concept-arrow)">
+          <line x1="122" y1="170" x2="252" y2="116"></line>
+          <line x1="326" y1="116" x2="536" y2="116"></line>
+          <line x1="610" y1="116" x2="738" y2="184"></line>
+          <line x1="326" y1="292" x2="536" y2="292"></line>
+          <line x1="610" y1="292" x2="738" y2="236"></line>
+        </g>
+        <g stroke="#9f4d3f" stroke-width="4" stroke-dasharray="8 7" fill="none">
+          <line x1="122" y1="224" x2="252" y2="292"></line>
+          <line x1="286" y1="152" x2="286" y2="256"></line>
+        </g>
+        <g stroke="#9f4d3f" stroke-width="5" stroke-linecap="round">
+          <line x1="388" y1="100" x2="404" y2="132"></line>
+          <line x1="404" y1="100" x2="388" y2="132"></line>
+          <line x1="170" y1="238" x2="188" y2="270"></line>
+          <line x1="188" y1="238" x2="170" y2="270"></line>
+        </g>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="86" cy="198" r="36"></circle>
+          <circle cx="286" cy="116" r="36"></circle>
+          <circle cx="286" cy="292" r="36"></circle>
+          <circle cx="574" cy="116" r="36"></circle>
+          <circle cx="574" cy="292" r="36"></circle>
+          <circle cx="774" cy="210" r="36"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="23" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="86" y="198">s</text>
+          <text x="286" y="116">A</text>
+          <text x="286" y="292">B</text>
+          <text x="574" y="116">C</text>
+          <text x="574" y="292">D</text>
+          <text x="774" y="210">t</text>
+        </g>
+        <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="850" text-anchor="middle">
+          <text x="432" y="96" fill="#9f4d3f">A->C 满</text>
+          <text x="176" y="290" fill="#9f4d3f">s->B 满</text>
+          <text x="330" y="210" fill="#9f4d3f">A->B 是同层边</text>
+          <text x="330" y="230" fill="#9f4d3f">本轮不能走</text>
+          <text x="446" y="334" fill="#2f6f68">B->D、D->t 还有余量</text>
+          <text x="430" y="382" fill="#6f675f">阻塞流：当前分层图被堵住了，不等于全局已经没有增广路。</text>
+        </g>
+      </svg>
+
+      <h3>3. 当前弧优化</h3>
+      <p>DFS 从一个点出发时，会依次尝试它的出边。如果某条边已经证明走不通，下一次再从这个点搜索时就没有必要从头扫描。当前弧优化用 <code>it[u]</code> 记录点 <code>u</code> 已经尝试到第几条边。</p>
+      <div class="formula formula-block">没有当前弧：每次 DFS 都可能重复扫描失败边
+有当前弧：失败边只会被跳过一次，后续从记录位置继续</div>
+      <p>当前弧只在<strong>同一张分层图</strong>内有效。下一轮 BFS 会重建层次，原来不合法的边可能变合法，所以 <code>it[u]</code> 必须重置。</p>
+    </section>
+
+    <section id="algorithm" class="card">
+      <h2>四、算法流程</h2>
+      <p>Dinic 的主循环非常紧凑：</p>
+      <pre><code>max_flow = 0
+while BFS builds levels and t is reachable:
+    reset current arc pointer it[u] = 0
+    while pushed = DFS(s, infinity):
+        max_flow += pushed
+return max_flow</code></pre>
+      <p>其中 DFS 的含义是：从当前点 <code>u</code> 出发，尝试沿分层图把不超过 <code>limit</code> 的流量送到 <code>t</code>。</p>
+      <pre><code>DFS(u, limit):
+    if u == t:
+        return limit
+    for edge i from it[u] to end:
+        it[u] = i
+        if residual(edge) > 0 and level[v] == level[u] + 1:
+            pushed = DFS(v, min(limit, residual(edge)))
+            if pushed > 0:
+                apply pushed on edge and reverse edge
+                return pushed
+    return 0</code></pre>
+      <div class="note">很多模板里的 DFS 一次只返回一条路径的推流量；外层 <code>while DFS(s, inf)</code> 会反复调用，直到当前分层图中再也推不出流量。也有写法在一次 DFS 中累积多条分支，本质相同。</div>
+    </section>
+
+    <section id="derive" class="card">
+      <h2>五、逐轮推导</h2>
+      <p>考虑如下容量网络。网络包含横向边 <code>A -> B</code>，但不存在 <code>B -> C</code>。第一轮中 <code>A -> B</code> 因为 <code>A</code> 和 <code>B</code> 同层而不能进入分层图；当 <code>s -> B</code> 被堵住后，第二轮 <code>B</code> 的层数后移，<code>A -> B</code> 变成合法的分层边。</p>
+      <svg role="img" aria-label="Dinic 示例网络：s 到 A 容量 10，s 到 B 容量 3，A 到 C 容量 4，A 到 B 容量 4，B 到 D 容量 7，C 到 t 容量 4，D 到 t 容量 7；没有 B 到 C 边" viewBox="0 0 860 420" width="100%" style="display:block; margin: 18px 0; max-width: 860px;">
+        <defs>
+          <marker id="dinic-arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="858" height="418" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g stroke="#8a5a35" stroke-width="4" fill="none" marker-end="url(#dinic-arrow)">
+          <line x1="122" y1="210" x2="252" y2="128"></line>
+          <line x1="122" y1="210" x2="252" y2="292"></line>
+          <line x1="286" y1="164" x2="286" y2="256"></line>
+          <line x1="326" y1="128" x2="536" y2="128"></line>
+          <line x1="326" y1="292" x2="536" y2="292"></line>
+          <line x1="610" y1="128" x2="738" y2="210"></line>
+          <line x1="610" y1="292" x2="738" y2="210"></line>
+        </g>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="86" cy="210" r="36"></circle>
+          <circle cx="290" cy="128" r="36"></circle>
+          <circle cx="290" cy="292" r="36"></circle>
+          <circle cx="574" cy="128" r="36"></circle>
+          <circle cx="574" cy="292" r="36"></circle>
+          <circle cx="774" cy="210" r="36"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="23" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="86" y="210">s</text>
+          <text x="290" y="128">A</text>
+          <text x="290" y="292">B</text>
+          <text x="574" y="128">C</text>
+          <text x="574" y="292">D</text>
+          <text x="774" y="210">t</text>
+        </g>
+        <g fill="#8a5a35" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="850" text-anchor="middle">
+          <text x="164" y="142">10</text>
+          <text x="164" y="296">3</text>
+          <text x="322" y="214">4</text>
+          <text x="432" y="106">4</text>
+          <text x="432" y="318">7</text>
+          <text x="688" y="146">4</text>
+          <text x="688" y="298">7</text>
+        </g>
+        <text x="430" y="374" fill="#6f675f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" text-anchor="middle">结构特征：存在 A -> B，不存在 B -> C；第一轮 A 和 B 同层，A -> B 不属于分层图。</text>
+      </svg>
+
+      <h3>第 1 轮 BFS：构造分层图</h3>
+      <p>初始残量等于容量，因此 BFS 得到：</p>
+      <div class="formula formula-block">level[s] = 0
+level[A] = level[B] = 1
+level[C] = level[D] = 2
+level[t] = 3</div>
+      <p>分层图保留 <code>s -> A</code>、<code>s -> B</code>、<code>A -> C</code>、<code>B -> D</code>、<code>C -> t</code>、<code>D -> t</code>。它<strong>不保留</strong> <code>A -> B</code>，因为此时 <code>A</code> 和 <code>B</code> 都在第 1 层，<code>A -> B</code> 不是从第 <code>k</code> 层走到第 <code>k + 1</code> 层。</p>
+
+      <h3>第 1 轮 DFS：在分层图里推阻塞流</h3>
+      <p>假设邻接扫描顺序为 <code>s: A, B</code>，<code>A: C, B</code>，<code>B: D</code>。DFS 会连续推进两条当前分层图中的路径：</p>
+      <table>
+        <thead><tr><th>路径</th><th>瓶颈</th><th>推完后的关键变化</th><th>累计流量</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> A -> C -> t</code></td><td><code>min(10, 4, 4) = 4</code></td><td><code>A -> C</code> 和 <code>C -> t</code> 满</td><td>4</td></tr>
+          <tr><td><code>s -> B -> D -> t</code></td><td><code>min(3, 7, 7) = 3</code></td><td><code>s -> B</code> 满，<code>B -> D</code> 和 <code>D -> t</code> 各剩 4</td><td>7</td></tr>
+        </tbody>
+      </table>
+      <p>此时当前分层图已经被堵住：<code>s -> B</code> 满了，<code>A -> C</code> 满了，而 <code>A -> B</code> 仍然不是这一轮的合法分层边。虽然 <code>B -> D</code> 和 <code>D -> t</code> 还各剩 4，当前分层图中已经没有从 <code>s</code> 到 <code>t</code> 的路径；阻塞流只表示当前分层图被堵住，不表示已经达到全局最大流。</p>
+      <div class="formula formula-block">当前主要流量：
+s -> A = 4 / 10
+s -> B = 3 / 3
+A -> C = 4 / 4
+A -> B = 0 / 4
+B -> D = 3 / 7
+C -> t = 4 / 4
+D -> t = 3 / 7</div>
+
+      <svg role="img" aria-label="Dinic 第一轮阻塞流：A 到 C 和 C 到 t 已满，s 到 B 已满，A 到 B 是同层边不属于分层图；B 到 D 和 D 到 t 仍有剩余但当前层次中不可继续增广" viewBox="0 0 860 430" width="100%" style="display:block; margin: 18px 0; max-width: 860px;">
+        <defs>
+          <marker id="dinic-phase1-arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#2f6f68"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="858" height="428" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g fill="#6f675f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="850" text-anchor="middle">
+          <text x="86" y="62">L0</text>
+          <text x="286" y="62">L1</text>
+          <text x="574" y="62">L2</text>
+          <text x="774" y="62">L3</text>
+        </g>
+        <g stroke="#2f6f68" stroke-width="4" fill="none" marker-end="url(#dinic-phase1-arrow)">
+          <line x1="122" y1="174" x2="252" y2="128"></line>
+          <line x1="326" y1="292" x2="536" y2="292"></line>
+          <line x1="610" y1="292" x2="738" y2="224"></line>
+        </g>
+        <g stroke="#9f4d3f" stroke-width="4" stroke-dasharray="8 7" fill="none">
+          <line x1="122" y1="226" x2="252" y2="292"></line>
+          <line x1="326" y1="128" x2="536" y2="128"></line>
+          <line x1="610" y1="128" x2="738" y2="196"></line>
+          <line x1="286" y1="164" x2="286" y2="256"></line>
+        </g>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="86" cy="210" r="36"></circle>
+          <circle cx="286" cy="128" r="36"></circle>
+          <circle cx="286" cy="292" r="36"></circle>
+          <circle cx="574" cy="128" r="36"></circle>
+          <circle cx="574" cy="292" r="36"></circle>
+          <circle cx="774" cy="210" r="36"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="23" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="86" y="210">s</text>
+          <text x="286" y="128">A</text>
+          <text x="286" y="292">B</text>
+          <text x="574" y="128">C</text>
+          <text x="574" y="292">D</text>
+          <text x="774" y="210">t</text>
+        </g>
+        <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="850" text-anchor="middle">
+          <text x="164" y="142" fill="#2f6f68">剩 6</text>
+          <text x="164" y="304" fill="#9f4d3f">满</text>
+          <text x="432" y="108" fill="#9f4d3f">满</text>
+          <text x="688" y="142" fill="#9f4d3f">满</text>
+          <text x="432" y="318" fill="#2f6f68">剩 4</text>
+          <text x="688" y="302" fill="#2f6f68">剩 4</text>
+          <text x="332" y="214" fill="#9f4d3f">同层边</text>
+          <text x="430" y="384" fill="#6f675f">当前分层图没有 s 到 t 路径，第 1 轮得到阻塞流；残量网络仍可能存在更长增广路。</text>
+        </g>
+      </svg>
+
+      <h3>当前弧在第 1 轮如何起作用</h3>
+      <p>当前弧优化不改变搜索结果，只减少重复扫描。第 1 轮里，<code>A -> C</code> 被推满后，再从 <code>A</code> 搜索时会发现 <code>A -> C</code> 不能走；接着检查 <code>A -> B</code>，又发现它不是下一层边。于是 <code>it[A]</code> 移动到末尾，后续同一轮不再从 <code>A -> C</code> 重新扫起。</p>
+      <table>
+        <thead><tr><th>时刻</th><th><code>it[s]</code></th><th><code>it[A]</code></th><th>发生了什么</th></tr></thead>
+        <tbody>
+          <tr><td>DFS 第一次进入</td><td><code>s -> A</code></td><td><code>A -> C</code></td><td>成功推 <code>s -> A -> C -> t</code>，推入 4。</td></tr>
+          <tr><td>再次尝试 <code>A</code></td><td><code>s -> A</code></td><td><code>A -> C</code> 后移</td><td><code>A -> C</code> 已满，<code>A -> B</code> 是同层边，<code>A</code> 在本轮不再产生可行分支。</td></tr>
+          <tr><td>继续从 <code>s</code> 尝试</td><td><code>s -> B</code></td><td>本轮末尾</td><td>转去 <code>s -> B -> D -> t</code>，推入 3。</td></tr>
+        </tbody>
+      </table>
+      <div class="note">当前弧的作用在于：同一张分层图里，如果从 <code>A</code> 出发已经证明所有可选边都失败，后续 DFS 不会重复扫描这些失败边。</div>
+
+      <h3>第 2 轮 BFS：层次发生变化</h3>
+      <p>第 1 轮结束后重新 BFS。由于 <code>s -> B</code> 已满，<code>B</code> 不再是第 1 层；而 <code>s -> A</code> 还剩 6，<code>A -> B</code> 还剩 4，因此 <code>B</code> 会被 <code>A -> B</code> 带到第 2 层。</p>
+      <div class="formula formula-block">level[s] = 0
+level[A] = 1
+level[B] = 2
+level[D] = 3
+level[t] = 4</div>
+      <p>同一条 <code>A -> B</code> 在不同轮次中的角色发生了变化：第 1 轮因为 <code>A</code> 和 <code>B</code> 同层而被排除；第 2 轮因为 <code>B</code> 后移到第 2 层，成为继续增广的关键通道。</p>
+      <div class="formula formula-block">第 1 轮：A(L1) -> B(L1)，不是分层边
+第 2 轮：A(L1) -> B(L2)，成为分层边</div>
+      <p>这一轮 DFS 找到：</p>
+      <div class="formula formula-block">P = s -> A -> B -> D -> t
+delta = min(6, 4, 4, 4) = 4</div>
+      <p>推完以后：</p>
+      <table>
+        <thead><tr><th>边</th><th>流量 / 容量</th><th>正向残量</th><th>反向残量</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> A</code></td><td>8 / 10</td><td>2</td><td>8</td></tr>
+          <tr><td><code>A -> B</code></td><td>4 / 4</td><td>0</td><td>4</td></tr>
+          <tr><td><code>B -> D</code></td><td>7 / 7</td><td>0</td><td>7</td></tr>
+          <tr><td><code>D -> t</code></td><td>7 / 7</td><td>0</td><td>7</td></tr>
+        </tbody>
+      </table>
+
+      <svg role="img" aria-label="Dinic 第二轮分层图：s 到 A，A 到 B，B 到 D，D 到 t 构成更长的增广路径；A 到 B 从上一轮同层边变为本轮跨层边" viewBox="0 0 860 430" width="100%" style="display:block; margin: 18px 0; max-width: 860px;">
+        <defs>
+          <marker id="dinic-phase2-arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#2f6f68"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="858" height="428" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g fill="#6f675f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="850" text-anchor="middle">
+          <text x="86" y="62">L0</text>
+          <text x="286" y="62">L1</text>
+          <text x="286" y="362">L2</text>
+          <text x="574" y="362">L3</text>
+          <text x="774" y="62">L4</text>
+        </g>
+        <g stroke="#2f6f68" stroke-width="4" fill="none" marker-end="url(#dinic-phase2-arrow)">
+          <line x1="122" y1="180" x2="252" y2="136"></line>
+          <line x1="286" y1="164" x2="286" y2="256"></line>
+          <line x1="326" y1="292" x2="536" y2="292"></line>
+          <line x1="610" y1="292" x2="738" y2="224"></line>
+        </g>
+        <g stroke="#9f4d3f" stroke-width="4" stroke-dasharray="8 7" fill="none">
+          <line x1="122" y1="226" x2="252" y2="292"></line>
+          <line x1="326" y1="128" x2="536" y2="128"></line>
+          <line x1="610" y1="128" x2="738" y2="196"></line>
+        </g>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="86" cy="210" r="36"></circle>
+          <circle cx="286" cy="128" r="36"></circle>
+          <circle cx="286" cy="292" r="36"></circle>
+          <circle cx="574" cy="128" r="36"></circle>
+          <circle cx="574" cy="292" r="36"></circle>
+          <circle cx="774" cy="210" r="36"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="23" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="86" y="210">s</text>
+          <text x="286" y="128">A</text>
+          <text x="286" y="292">B</text>
+          <text x="574" y="128">C</text>
+          <text x="574" y="292">D</text>
+          <text x="774" y="210">t</text>
+        </g>
+        <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="850" text-anchor="middle">
+          <text x="164" y="154" fill="#2f6f68">剩 6</text>
+          <text x="322" y="214" fill="#2f6f68">剩 4</text>
+          <text x="432" y="318" fill="#2f6f68">剩 4</text>
+          <text x="688" y="302" fill="#2f6f68">剩 4</text>
+          <text x="164" y="302" fill="#9f4d3f">s->B 满</text>
+          <text x="432" y="108" fill="#9f4d3f">A->C 满</text>
+          <text x="688" y="142" fill="#9f4d3f">C->t 满</text>
+          <text x="430" y="394" fill="#6f675f">第二轮的最短增广路更长：s -> A -> B -> D -> t。</text>
+        </g>
+      </svg>
+
+      <h3>当前弧为什么要在第 2 轮重置</h3>
+      <p>第 1 轮里 <code>A -> B</code> 被当前弧跳过，是因为它当时不符合分层方向；第 2 轮重新 BFS 后，<code>A -> B</code> 已经变成合法边。如果 <code>it[A]</code> 不重置，算法就会错过这条新合法路径。</p>
+      <div class="formula formula-block">每轮 BFS 后：
+level[] 重新计算
+it[u] = 0 重新开始扫描
+
+原因：边是否合法，取决于本轮 level[]，不是永久属性。</div>
+
+      <h3>第 3 轮 BFS：终止并给出割</h3>
+      <p>第 2 轮推完后，当前总流量为：</p>
+      <div class="formula formula-block">第一轮阻塞流：4 + 3 = 7
+第二轮阻塞流：4
+总流量：11</div>
+      <p>再次 BFS 时，<code>s -> A</code> 还剩 2，但 <code>A -> C</code> 和 <code>A -> B</code> 都已经满了；<code>s -> B</code> 也已经满了。所以残量网络中从 <code>s</code> 只能到达 <code>A</code>，无法再到达 <code>t</code>。</p>
+      <div class="formula formula-block">S = {s, A}
+T = {B, C, D, t}
+
+跨割边：
+s -> B，容量 3
+A -> C，容量 4
+A -> B，容量 4
+
+割容量 = 3 + 4 + 4 = 11</div>
+      <p>当前流量等于这个割的容量，所以最大流就是 <code>11</code>。</p>
+
+      <h3>最大流对应的路径组合</h3>
+      <p>最大流算法最终维护的是每条边上的流量，不一定直接输出“路径清单”。但在这个例子里，可以把最终边流量分解成三条从 <code>s</code> 到 <code>t</code> 的路径：</p>
+      <table>
+        <thead><tr><th>路径</th><th>流量</th><th>来源</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> A -> C -> t</code></td><td>4</td><td>第 1 轮阻塞流中的第一条路径。</td></tr>
+          <tr><td><code>s -> B -> D -> t</code></td><td>3</td><td>第 1 轮阻塞流中的第二条路径。</td></tr>
+          <tr><td><code>s -> A -> B -> D -> t</code></td><td>4</td><td>第 2 轮重新分层后出现的更长路径。</td></tr>
+        </tbody>
+      </table>
+      <p>把这三条路径叠加起来，就得到最终的边流量：</p>
+      <div class="formula formula-block">s -> A = 4 + 4 = 8
+s -> B = 3
+A -> C = 4
+A -> B = 4
+B -> D = 3 + 4 = 7
+C -> t = 4
+D -> t = 3 + 4 = 7
+
+总流量 = 4 + 3 + 4 = 11</div>
+      <p>其中 <code>B -> D</code> 和 <code>D -> t</code> 是两条路径共享的后半段：来自 <code>s -> B -> D -> t</code> 的 3 单位流量，与来自 <code>s -> A -> B -> D -> t</code> 的 4 单位流量在 <code>B</code> 之后合并，所以这两条边上的最终流量是 <code>7</code>。</p>
+      <div class="note">一般最大流结果也可以做路径分解：在所有正流量边组成的图中，反复找一条 <code>s -> t</code> 路径，取路径上的最小流量作为该路径流量并从沿途边上扣除，直到不存在正流量的 <code>s -> t</code> 路径。若存在环流，它不影响最大流值，可以单独忽略或消去。</div>
+      <blockquote>该网络展示了 Dinic 的层次推进：第一轮只处理 3 条边的最短路径；第二轮允许 <code>A -> B</code> 进入分层图，处理 4 条边的更长路径。</blockquote>
+    </section>
+
+    <section id="why" class="card">
+      <h2>六、为什么正确</h2>
+      <p>Dinic 的正确性仍然来自 Ford-Fulkerson 的增广框架和最大流最小割定理。它每次 DFS 推流都只沿残量容量大于 0 的边前进，因此得到的新流仍然满足容量约束和流量守恒。</p>
+      <p>如果某次 BFS 后 <code>t</code> 不可达，把所有在残量网络中能从 <code>s</code> 到达的点记为集合 <code>S</code>，其余点为 <code>T</code>。因为没有残量边能从 <code>S</code> 继续穿到 <code>T</code>，所以跨割的正向边都已经满流；反向能撤回的边不会增加从 <code>S</code> 到 <code>T</code> 的容量。于是当前流量等于这个割的容量。</p>
+      <div class="formula formula-block">任意可行流 <= 任意割容量
+当前流量 = 某个割容量
+所以：当前流就是最大流，这个割就是最小割</div>
+      <p>分层图和阻塞流影响的是效率，而不是正确性的根基。即使每轮只找一条路径，只要合法增广并在无路时停止，仍然是最大流；Dinic 只是更系统地批量处理当前最短层次中的多条路径。</p>
+    </section>
+
+    <section id="complexity" class="card">
+      <h2>七、复杂度直觉</h2>
+      <p>Dinic 在一般图上的经典复杂度常写作 <code>O(V^2 E)</code>。可以从两个层面理解：</p>
+      <table>
+        <thead><tr><th>部分</th><th>直觉</th><th>代价</th></tr></thead>
+        <tbody>
+          <tr><td>BFS 分层</td><td>扫描残量边，计算每个点的层数。</td><td><code>O(E)</code></td></tr>
+          <tr><td>一轮阻塞流</td><td>DFS 在当前弧优化下推进，失败边不会被无限重复扫描。</td><td>常按 <code>O(VE)</code> 上界理解</td></tr>
+          <tr><td>轮数</td><td>每轮阻塞当前最短层次结构，下一次若还可达，最短距离会向后推进。</td><td>不超过 <code>O(V)</code> 轮</td></tr>
+        </tbody>
+      </table>
+      <p>在二分图匹配这类特殊网络上，Dinic 的表现更好，常见上界可到 <code>O(E sqrt(V))</code> 量级，与 Hopcroft-Karp 的分层批量增广思想非常接近。</p>
+      <div class="note">实践中 Dinic 往往比 Edmonds-Karp 更常用：它不会受最大流数值 <code>F</code> 直接控制，在稀疏图、整数容量和多路径并存的网络里通常很稳。</div>
+    </section>
+
+    <section id="implementation" class="card">
+      <h2>八、实现要点</h2>
+      <div class="grid2">
+        <div class="box">
+          <span class="label">边结构</span>
+          <p>每次加边都同时加一条反向边。原边初始容量为 <code>cap</code>，反向边初始容量为 <code>0</code>；推流时正边减、反边加。</p>
+        </div>
+        <div class="box">
+          <span class="label">BFS</span>
+          <p>只访问残量容量大于 0 的边。若 <code>t</code> 没有层数，本轮主循环结束，当前流就是最大流。</p>
+        </div>
+        <div class="box">
+          <span class="label">DFS</span>
+          <p>只能走 <code>level[v] = level[u] + 1</code> 的边。返回值为本次实际推过去的流量，返回 0 表示这条分支走不通。</p>
+        </div>
+        <div class="box">
+          <span class="label">当前弧</span>
+          <p><code>it[u]</code> 要在每轮 BFS 后重置。它属于当前分层图，一旦层次重建，旧的扫描位置就不再可靠。</p>
+        </div>
+      </div>
+      <pre><code>add_edge(u, v, cap):
+    graph[u].push({to: v, rev: graph[v].size, cap: cap})
+    graph[v].push({to: u, rev: graph[u].size - 1, cap: 0})
+
+push(edge, x):
+    edge.cap -= x
+    graph[edge.to][edge.rev].cap += x</code></pre>
+    </section>
+
+    <footer><p>相关延伸：可以先读最大流总览、Ford-Fulkerson 推导和 Edmonds-Karp，再继续进入最小费用最大流、二分图匹配与物流履约建模。</p></footer>
+  </main>
+</body>
+</html>
