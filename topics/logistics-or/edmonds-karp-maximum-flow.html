@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Edmonds-Karp 算法：用 BFS 稳定选择增广路径</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <div class="eyebrow">物流运筹 · 最大流算法</div>
+      <h1>Edmonds-Karp 算法：用 BFS 稳定选择增广路径</h1>
+      <p class="intro">Edmonds-Karp 是 Ford-Fulkerson 方法的一种确定性实现：每一轮都在残量网络里用 BFS 找边数最少的增广路径。它不改变最大流的建模方式，却把“随便找路”的不稳定性变成了有复杂度上界的可控过程。</p>
+      <div class="meta"><span class="tag">Edmonds-Karp</span><span class="tag">最大流</span><span class="tag">BFS</span><span class="tag">残量网络</span><span class="tag">增广路径</span></div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#problem">一、它解决什么问题</a>
+      <a href="#idea">二、核心思想</a>
+      <a href="#algorithm">三、算法流程</a>
+      <a href="#example">四、示例网络</a>
+      <a href="#derive">五、逐轮推导</a>
+      <a href="#stop">六、终止与最小割</a>
+      <a href="#complexity">七、复杂度为什么稳定</a>
+      <a href="#practice">八、实现要点</a>
+    </nav>
+
+    <section id="problem" class="card">
+      <h2>一、它解决什么问题</h2>
+      <p>Edmonds-Karp 用来求有向容量网络中的最大流。给定源点 <code>s</code>、汇点 <code>t</code> 和每条边的容量 <code>c(u, v)</code>，目标是在满足容量约束和流量守恒的前提下，让从 <code>s</code> 流向 <code>t</code> 的总流量最大。</p>
+      <div class="formula formula-block">容量约束：0 <= f(u, v) <= c(u, v)
+流量守恒：除 s、t 外，流入 = 流出
+目标函数：maximize |f|</div>
+      <blockquote>Edmonds-Karp 的本质不是发明新的最大流模型，而是规定每次都走残量网络中的最短增广路径。</blockquote>
+      <p>这里的“最短”不是容量最大、距离最短或成本最低，而是<strong>边数最少</strong>。这正好是 BFS 擅长找到的路径。</p>
+    </section>
+
+    <section id="idea" class="card">
+      <h2>二、核心思想</h2>
+      <p>Ford-Fulkerson 的基本框架是：只要残量网络中还存在从 <code>s</code> 到 <code>t</code> 的增广路径，就沿这条路径增加瓶颈流量。问题是，如果“任意选择路径”，算法可能走很多绕路，甚至在非整数容量上出现麻烦。</p>
+      <div class="grid2">
+        <div class="box warning">
+          <span class="label">朴素选择</span>
+          <p>每次随意找一条可行路径。路径可能很绕，早期选择可能不断制造后续调整。</p>
+        </div>
+        <div class="box good">
+          <span class="label">Edmonds-Karp</span>
+          <p>每次 BFS 找边数最少的增广路径。选择规则固定，路径层数会形成单调推进的结构。</p>
+        </div>
+      </div>
+      <p>残量网络仍然包含两类边：</p>
+      <table>
+        <thead><tr><th>残量边</th><th>残量</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td>原边 <code>u -> v</code></td><td><code>c(u, v) - f(u, v)</code></td><td>还可以继续往前增加多少流量。</td></tr>
+          <tr><td>反向边 <code>v -> u</code></td><td><code>f(u, v)</code></td><td>最多可以撤销多少已经走过的真实流量。</td></tr>
+        </tbody>
+      </table>
+      <div class="summary">所以 Edmonds-Karp 的一句话版本是：在残量网络上反复 BFS，找到最少边数的 <code>s -> t</code> 路径，沿路径推入瓶颈流量，直到 BFS 找不到 <code>t</code>。</div>
+
+      <h3>BFS 为什么一定找到边数最少的增广路径</h3>
+      <p>在 Edmonds-Karp 里，残量网络的每条可走边都只算“一步”，没有边权差异。BFS 的队列按层推进：先处理离 <code>s</code> 0 条边的点，再处理 1 条边能到的点，再处理 2 条边能到的点。一个点第一次被访问时，它的层数就是从 <code>s</code> 到它的最少边数。</p>
+      <div class="formula formula-block">第 0 层：s
+第 1 层：从 s 走 1 条残量边能到的点
+第 2 层：从 s 走 2 条残量边能到、且之前没到过的点
+...
+第一次发现 t 时：得到的就是边数最少的 s -> t 增广路径</div>
+      <p>原因很朴素：如果存在一条更短的路径，它的上一层节点一定会更早出队，并在当前路径之前发现 <code>t</code>。所以 BFS 不是“碰巧找到短路”，而是用队列顺序保证先穷尽所有更短路径。</p>
+    </section>
+
+    <section id="algorithm" class="card">
+      <h2>三、算法流程</h2>
+      <p>完整流程可以写成下面几步：</p>
+      <div class="map-line" aria-label="Edmonds-Karp 算法流程">
+        <span class="node">初始化流量为 0</span>
+        <span class="arrow">-></span>
+        <span class="node">构造残量网络</span>
+        <span class="arrow">-></span>
+        <span class="node">BFS 找最短增广路径</span>
+        <span class="arrow">-></span>
+        <span class="node">按瓶颈增广</span>
+        <span class="arrow">-></span>
+        <span class="node">重复直到不可达</span>
+      </div>
+      <p>伪代码如下：</p>
+      <pre><code>max_flow = 0
+while BFS can reach t in residual graph:
+    P = path restored by parent pointers
+    delta = min residual_capacity(e) for e in P
+    for each edge e in P:
+        if e is a forward residual edge:
+            increase original flow on e by delta
+        else:
+            decrease original flow on the reverse original edge by delta
+    max_flow += delta
+return max_flow</code></pre>
+      <p>BFS 的父指针不仅用来判断 <code>t</code> 是否可达，也用来还原这一轮到底选择了哪条最短增广路径。</p>
+    </section>
+
+    <section id="example" class="card">
+      <h2>四、示例网络</h2>
+      <p>下面用一个 6 个点的容量网络完整推导。源点 <code>s</code> 向 <code>A</code> 和 <code>B</code> 供给，汇点 <code>t</code> 从 <code>C</code> 和 <code>D</code> 接收；中间边决定最终能通过多少。</p>
+
+      <svg role="img" aria-label="Edmonds-Karp 示例网络：s 到 A 容量 10，s 到 B 容量 10，A 到 C 容量 4，A 到 D 容量 8，A 到 B 容量 2，B 到 D 容量 9，D 到 C 容量 6，C 到 t 容量 10，D 到 t 容量 10" viewBox="0 0 900 460" width="100%" style="display:block; margin: 18px 0; max-width: 900px;">
+        <defs>
+          <marker id="ek-arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+          <marker id="ek-arrow-accent" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#9f4d3f"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="898" height="458" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g stroke="#8a5a35" stroke-width="4" fill="none" marker-end="url(#ek-arrow)">
+          <line x1="120" y1="230" x2="248" y2="138"></line>
+          <line x1="120" y1="230" x2="248" y2="322"></line>
+          <line x1="324" y1="122" x2="548" y2="122"></line>
+          <line x1="320" y1="146" x2="548" y2="298"></line>
+          <line x1="286" y1="162" x2="286" y2="284"></line>
+          <line x1="324" y1="322" x2="548" y2="322"></line>
+          <line x1="580" y1="286" x2="580" y2="158"></line>
+          <line x1="620" y1="122" x2="760" y2="206"></line>
+          <line x1="620" y1="322" x2="760" y2="254"></line>
+        </g>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="84" cy="230" r="36"></circle>
+          <circle cx="286" cy="122" r="36"></circle>
+          <circle cx="286" cy="322" r="36"></circle>
+          <circle cx="584" cy="122" r="36"></circle>
+          <circle cx="584" cy="322" r="36"></circle>
+          <circle cx="796" cy="230" r="36"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="23" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="84" y="230">s</text>
+          <text x="286" y="122">A</text>
+          <text x="286" y="322">B</text>
+          <text x="584" y="122">C</text>
+          <text x="584" y="322">D</text>
+          <text x="796" y="230">t</text>
+        </g>
+        <g fill="#8a5a35" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="850" text-anchor="middle">
+          <text x="164" y="154">10</text>
+          <text x="164" y="326">10</text>
+          <text x="436" y="100">4</text>
+          <text x="438" y="212">8</text>
+          <text x="318" y="226">2</text>
+          <text x="436" y="348">9</text>
+          <text x="612" y="226">6</text>
+          <text x="704" y="146">10</text>
+          <text x="704" y="330">10</text>
+        </g>
+        <text x="450" y="412" fill="#6f675f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" text-anchor="middle">边旁数字表示容量。BFS 每一轮只关心残量大于 0 的边，并选择边数最少的 s 到 t 路径。</text>
+      </svg>
+
+      <p>所有边的初始流量都是 0，因此初始残量等于容量。我们假设每个点的邻接边按图中常见阅读顺序扫描：从 <code>s</code> 先看 <code>A</code> 再看 <code>B</code>，从 <code>A</code> 先看 <code>C</code> 再看 <code>D</code>，最后再看 <code>A -> B</code>。</p>
+      <div class="note">图里有一条 <code>A -> B</code> 容量为 2 的边。它不会改变下面的推导结果：初始 BFS 中 <code>B</code> 已经通过 <code>s -> B</code> 在第 1 层被发现，<code>A -> B</code> 不会给 <code>B</code> 更短路径；后面 <code>s -> A</code> 满流后，<code>A</code> 从源点侧不可达，这条边也就无法继续帮助到达 <code>t</code>。残量图中会把它弱化标成 <code>A->B 正 2</code>。</div>
+    </section>
+
+    <section id="derive" class="card">
+      <h2>五、逐轮推导</h2>
+
+      <h3>第 1 轮：BFS 找到 s -> A -> C -> t</h3>
+      <p>初始 BFS 的层次是：</p>
+      <div class="formula formula-block">第 0 层：s
+第 1 层：A, B
+第 2 层：C, D
+第 3 层：t</div>
+      <p>按父指针还原，第一条到达 <code>t</code> 的最短路径是：</p>
+      <div class="formula formula-block">P1 = s -> A -> C -> t
+delta = min(10, 4, 10) = 4</div>
+      <p>推入 4 之后：</p>
+      <table>
+        <thead><tr><th>边</th><th>流量 / 容量</th><th>正向残量</th><th>反向残量</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> A</code></td><td>4 / 10</td><td>6</td><td>4</td></tr>
+          <tr><td><code>A -> C</code></td><td>4 / 4</td><td>0</td><td>4</td></tr>
+          <tr><td><code>C -> t</code></td><td>4 / 10</td><td>6</td><td>4</td></tr>
+        </tbody>
+      </table>
+      <p>对应的关键残量网络如下。后面四张图统一用青绿色表示正向残量，标签写作 <code>正 n</code>；用紫色虚线表示反向残量，标签写作 <code>反 n</code>；红色只表示关键正向边已经变成 <code>正 0</code>，BFS 不能从这里穿过去。</p>
+      <svg role="img" aria-label="第 1 轮推入 4 后的残量网络：s 到 A 剩余 6，A 到 C 已满，下一轮可走 s 到 A 到 D 到 t；同时存在 A 到 s、C 到 A、t 到 C 的反向撤销边" viewBox="0 0 760 330" width="100%" style="display:block; margin: 16px 0; max-width: 760px;">
+        <defs>
+          <marker id="ek-r1-arrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L8,3 z" fill="#2f6f68"></path>
+          </marker>
+          <marker id="ek-r1-red" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L8,3 z" fill="#76527f"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="758" height="328" rx="16" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g stroke="#2f6f68" stroke-width="3" opacity="0.38" fill="none" marker-end="url(#ek-r1-arrow)">
+          <line x1="96" y1="179" x2="183" y2="226"></line>
+          <line x1="210" y1="118" x2="210" y2="212"></line>
+          <line x1="236" y1="240" x2="484" y2="240"></line>
+          <line x1="510" y1="214" x2="510" y2="116"></line>
+          <line x1="536" y1="104" x2="665" y2="151"></line>
+        </g>
+        <g stroke="#2f6f68" stroke-width="4" fill="none" marker-end="url(#ek-r1-arrow)">
+          <line x1="96" y1="151" x2="183" y2="104"></line>
+          <line x1="232" y1="105" x2="485" y2="224"></line>
+          <line x1="536" y1="226" x2="665" y2="179"></line>
+        </g>
+        <g stroke="#76527f" stroke-width="3" stroke-dasharray="7 6" fill="none" marker-end="url(#ek-r1-red)">
+          <line x1="184" y1="108" x2="96" y2="156"></line>
+          <line x1="484" y1="86" x2="236" y2="86"></line>
+          <line x1="664" y1="146" x2="536" y2="98"></line>
+        </g>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="70" cy="165" r="28"></circle><circle cx="210" cy="90" r="28"></circle><circle cx="210" cy="240" r="28"></circle>
+          <circle cx="510" cy="90" r="28"></circle><circle cx="510" cy="240" r="28"></circle><circle cx="690" cy="165" r="28"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="70" y="165">s</text><text x="210" y="90">A</text><text x="210" y="240">B</text><text x="510" y="90">C</text><text x="510" y="240">D</text><text x="690" y="165">t</text>
+        </g>
+        <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="850" text-anchor="middle">
+          <text x="132" y="112" fill="#2f6f68">正 6</text><text x="238" y="166" fill="#2f6f68">A->B 正 2</text><text x="352" y="154" fill="#2f6f68">A->D 正 8</text><text x="606" y="224" fill="#2f6f68">正 10</text>
+          <text x="132" y="238" fill="#2f6f68">正 10</text><text x="362" y="262" fill="#2f6f68">正 9</text><text x="536" y="166" fill="#2f6f68">正 6</text><text x="610" y="112" fill="#2f6f68">正 6</text>
+          <text x="132" y="92" fill="#76527f">A->s 反 4</text><text x="350" y="68" fill="#9f4d3f">A->C 正 0</text><text x="350" y="88" fill="#76527f">C->A 反 4</text><text x="606" y="94" fill="#76527f">t->C 反 4</text><text x="390" y="306" fill="#6f675f">下一轮 BFS 会优先找到 s -> A -> D -> t</text>
+        </g>
+      </svg>
+      <p>当前最大流候选值是 <code>4</code>。注意 <code>A -> C</code> 已经满了，下一轮 BFS 不能再沿这条正向边走。</p>
+
+      <h3>第 2 轮：BFS 找到 s -> A -> D -> t</h3>
+      <p>从 <code>s</code> 出发仍然可以到 <code>A</code> 和 <code>B</code>。由于 <code>A -> C</code> 正向残量为 0，BFS 从 <code>A</code> 继续看到的有效正向边是 <code>A -> D</code>。</p>
+      <div class="formula formula-block">P2 = s -> A -> D -> t
+delta = min(6, 8, 10) = 6</div>
+      <p>推入 6 之后：</p>
+      <table>
+        <thead><tr><th>边</th><th>流量 / 容量</th><th>正向残量</th><th>反向残量</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> A</code></td><td>10 / 10</td><td>0</td><td>10</td></tr>
+          <tr><td><code>A -> D</code></td><td>6 / 8</td><td>2</td><td>6</td></tr>
+          <tr><td><code>D -> t</code></td><td>6 / 10</td><td>4</td><td>6</td></tr>
+        </tbody>
+      </table>
+      <svg role="img" aria-label="第 2 轮推入 6 后的残量网络：s 到 A 已满，s 到 B 仍有 10，下一轮可走 s 到 B 到 D 到 t；A 到 s 和 D 到 A 是反向撤销边" viewBox="0 0 760 330" width="100%" style="display:block; margin: 16px 0; max-width: 760px;">
+        <defs>
+          <marker id="ek-r2-arrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L8,3 z" fill="#2f6f68"></path>
+          </marker>
+          <marker id="ek-r2-red" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L8,3 z" fill="#76527f"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="758" height="328" rx="16" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g stroke="#2f6f68" stroke-width="3" opacity="0.38" fill="none" marker-end="url(#ek-r2-arrow)">
+          <line x1="210" y1="118" x2="210" y2="212"></line>
+          <line x1="232" y1="105" x2="485" y2="224"></line>
+          <line x1="510" y1="214" x2="510" y2="116"></line>
+          <line x1="536" y1="104" x2="665" y2="151"></line>
+        </g>
+        <g stroke="#2f6f68" stroke-width="4" fill="none" marker-end="url(#ek-r2-arrow)">
+          <line x1="96" y1="179" x2="183" y2="226"></line>
+          <line x1="236" y1="240" x2="484" y2="240"></line>
+          <line x1="536" y1="226" x2="665" y2="179"></line>
+        </g>
+        <g stroke="#76527f" stroke-width="3" stroke-dasharray="7 6" fill="none" marker-end="url(#ek-r2-red)">
+          <line x1="184" y1="108" x2="96" y2="156"></line>
+          <line x1="484" y1="226" x2="232" y2="106"></line>
+          <line x1="664" y1="176" x2="536" y2="224"></line>
+        </g>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="70" cy="165" r="28"></circle><circle cx="210" cy="90" r="28"></circle><circle cx="210" cy="240" r="28"></circle>
+          <circle cx="510" cy="90" r="28"></circle><circle cx="510" cy="240" r="28"></circle><circle cx="690" cy="165" r="28"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="70" y="165">s</text><text x="210" y="90">A</text><text x="210" y="240">B</text><text x="510" y="90">C</text><text x="510" y="240">D</text><text x="690" y="165">t</text>
+        </g>
+        <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="850" text-anchor="middle">
+          <text x="132" y="238" fill="#2f6f68">正 10</text><text x="362" y="262" fill="#2f6f68">正 9</text><text x="606" y="224" fill="#2f6f68">正 4</text>
+          <text x="238" y="166" fill="#2f6f68">A->B 正 2</text><text x="350" y="150" fill="#2f6f68">A->D 正 2</text><text x="536" y="166" fill="#2f6f68">正 6</text><text x="610" y="112" fill="#2f6f68">正 6</text>
+          <text x="136" y="100" fill="#9f4d3f">s->A 正 0</text><text x="136" y="120" fill="#76527f">A->s 反 10</text><text x="362" y="192" fill="#76527f">D->A 反 6</text><text x="606" y="204" fill="#76527f">t->D 反 6</text>
+          <text x="390" y="306" fill="#6f675f">下一轮 BFS 转向 s -> B -> D -> t</text>
+        </g>
+      </svg>
+      <p>当前总流量变成 <code>10</code>。这时 <code>s -> A</code> 已满，之后从源点新发出的流量主要要走 <code>s -> B</code>。</p>
+
+      <h3>第 3 轮：BFS 找到 s -> B -> D -> t</h3>
+      <p>第三轮从 <code>s</code> 只能沿正向残量为 10 的 <code>s -> B</code> 进入 <code>B</code>。从 <code>B</code> 可以走 <code>B -> D</code>，而 <code>D -> t</code> 还剩 4。</p>
+      <div class="formula formula-block">P3 = s -> B -> D -> t
+delta = min(10, 9, 4) = 4</div>
+      <p>推入 4 之后：</p>
+      <table>
+        <thead><tr><th>边</th><th>流量 / 容量</th><th>正向残量</th><th>反向残量</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> B</code></td><td>4 / 10</td><td>6</td><td>4</td></tr>
+          <tr><td><code>B -> D</code></td><td>4 / 9</td><td>5</td><td>4</td></tr>
+          <tr><td><code>D -> t</code></td><td>10 / 10</td><td>0</td><td>10</td></tr>
+        </tbody>
+      </table>
+      <svg role="img" aria-label="第 3 轮推入 4 后的残量网络：D 到 t 已满，下一轮需要从 s 到 B 到 D 到 C 到 t；D 到 C 和 C 到 t 仍有残量" viewBox="0 0 760 330" width="100%" style="display:block; margin: 16px 0; max-width: 760px;">
+        <defs>
+          <marker id="ek-r3-arrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L8,3 z" fill="#2f6f68"></path>
+          </marker>
+          <marker id="ek-r3-red" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L8,3 z" fill="#76527f"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="758" height="328" rx="16" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g stroke="#2f6f68" stroke-width="3" opacity="0.38" fill="none" marker-end="url(#ek-r3-arrow)">
+          <line x1="210" y1="118" x2="210" y2="212"></line>
+          <line x1="232" y1="105" x2="485" y2="224"></line>
+        </g>
+        <g stroke="#2f6f68" stroke-width="4" fill="none" marker-end="url(#ek-r3-arrow)">
+          <line x1="96" y1="179" x2="183" y2="226"></line>
+          <line x1="236" y1="240" x2="484" y2="240"></line>
+          <line x1="510" y1="214" x2="510" y2="116"></line>
+          <line x1="536" y1="104" x2="665" y2="151"></line>
+        </g>
+        <g stroke="#76527f" stroke-width="3" stroke-dasharray="7 6" fill="none" marker-end="url(#ek-r3-red)">
+          <line x1="664" y1="176" x2="536" y2="224"></line>
+          <line x1="484" y1="236" x2="236" y2="236"></line>
+          <line x1="184" y1="108" x2="96" y2="156"></line>
+        </g>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="70" cy="165" r="28"></circle><circle cx="210" cy="90" r="28"></circle><circle cx="210" cy="240" r="28"></circle>
+          <circle cx="510" cy="90" r="28"></circle><circle cx="510" cy="240" r="28"></circle><circle cx="690" cy="165" r="28"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="70" y="165">s</text><text x="210" y="90">A</text><text x="210" y="240">B</text><text x="510" y="90">C</text><text x="510" y="240">D</text><text x="690" y="165">t</text>
+        </g>
+        <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="850" text-anchor="middle">
+          <text x="132" y="238" fill="#2f6f68">正 6</text><text x="362" y="262" fill="#2f6f68">正 5</text><text x="536" y="166" fill="#2f6f68">正 6</text><text x="610" y="112" fill="#2f6f68">正 6</text>
+          <text x="238" y="166" fill="#2f6f68">A->B 正 2</text><text x="350" y="150" fill="#2f6f68">A->D 正 2</text>
+          <text x="612" y="202" fill="#9f4d3f">D->t 正 0</text><text x="612" y="222" fill="#76527f">t->D 反 10</text><text x="362" y="230" fill="#76527f">D->B 反 4</text><text x="132" y="92" fill="#76527f">A->s 反 10</text>
+          <text x="390" y="306" fill="#6f675f">下一轮只能绕行：s -> B -> D -> C -> t</text>
+        </g>
+      </svg>
+      <p>当前总流量是 <code>14</code>。此时 <code>D -> t</code> 已满，但 <code>D -> C</code> 和 <code>C -> t</code> 仍有残量，所以还可能绕到 <code>C</code> 再进入 <code>t</code>。</p>
+
+      <h3>第 4 轮：BFS 找到 s -> B -> D -> C -> t</h3>
+      <p>第四轮 BFS 的最短可行路径需要 4 条边：</p>
+      <div class="formula formula-block">P4 = s -> B -> D -> C -> t
+delta = min(6, 5, 6, 6) = 5</div>
+      <p>这一轮把 <code>B -> D</code> 的剩余 5 用满，并通过 <code>D -> C</code> 把流量送到 <code>C -> t</code>。</p>
+      <table>
+        <thead><tr><th>边</th><th>流量 / 容量</th><th>正向残量</th><th>反向残量</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> B</code></td><td>9 / 10</td><td>1</td><td>9</td></tr>
+          <tr><td><code>B -> D</code></td><td>9 / 9</td><td>0</td><td>9</td></tr>
+          <tr><td><code>D -> C</code></td><td>5 / 6</td><td>1</td><td>5</td></tr>
+          <tr><td><code>C -> t</code></td><td>9 / 10</td><td>1</td><td>9</td></tr>
+        </tbody>
+      </table>
+      <svg role="img" aria-label="第 4 轮推入 5 后的残量网络：s 到 B 还剩 1，但 B 到 D 已满，BFS 无法从 B 进入 D，因此 t 不可达；可达集合为 s 和 B" viewBox="0 0 760 330" width="100%" style="display:block; margin: 16px 0; max-width: 760px;">
+        <defs>
+          <marker id="ek-r4-arrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L8,3 z" fill="#2f6f68"></path>
+          </marker>
+          <marker id="ek-r4-red" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L8,3 z" fill="#76527f"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="758" height="328" rx="16" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <path d="M148 48 L148 138 L300 176 L300 282" stroke="#9f4d3f" stroke-width="2.5" stroke-dasharray="8 8" fill="none"></path>
+        <text x="330" y="42" fill="#9f4d3f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="850" text-anchor="middle">割：{s, B} | {A, C, D, t}</text>
+        <g stroke="#2f6f68" stroke-width="3" opacity="0.32" fill="none" marker-end="url(#ek-r4-arrow)">
+          <line x1="210" y1="118" x2="210" y2="212"></line>
+          <line x1="232" y1="105" x2="485" y2="224"></line>
+          <line x1="510" y1="214" x2="510" y2="116"></line>
+          <line x1="536" y1="104" x2="665" y2="151"></line>
+        </g>
+        <g stroke="#2f6f68" stroke-width="4" fill="none" marker-end="url(#ek-r4-arrow)">
+          <line x1="96" y1="179" x2="183" y2="226"></line>
+        </g>
+        <g stroke="#9f4d3f" stroke-width="3" stroke-dasharray="7 6" fill="none">
+          <line x1="96" y1="151" x2="183" y2="104"></line>
+          <line x1="236" y1="240" x2="484" y2="240"></line>
+        </g>
+        <g stroke="#76527f" stroke-width="3" stroke-dasharray="7 6" fill="none" marker-end="url(#ek-r4-red)">
+          <line x1="484" y1="236" x2="236" y2="236"></line>
+        </g>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="70" cy="165" r="28"></circle><circle cx="210" cy="90" r="28"></circle><circle cx="210" cy="240" r="28"></circle>
+          <circle cx="510" cy="90" r="28"></circle><circle cx="510" cy="240" r="28"></circle><circle cx="690" cy="165" r="28"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="70" y="165">s</text><text x="210" y="90">A</text><text x="210" y="240">B</text><text x="510" y="90">C</text><text x="510" y="240">D</text><text x="690" y="165">t</text>
+        </g>
+        <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="850" text-anchor="middle">
+          <text x="132" y="238" fill="#2f6f68">正 1</text><text x="238" y="166" fill="#2f6f68">A->B 正 2</text><text x="350" y="150" fill="#2f6f68">A->D 正 2</text><text x="536" y="166" fill="#2f6f68">正 1</text><text x="610" y="112" fill="#2f6f68">正 1</text>
+          <text x="132" y="110" fill="#9f4d3f">s->A 正 0</text><text x="362" y="262" fill="#9f4d3f">B->D 正 0</text><text x="362" y="230" fill="#76527f">D->B 反 9</text>
+          <text x="390" y="306" fill="#6f675f">折线左侧是 S={s,B}，右侧是 T={A,C,D,t}</text>
+        </g>
+      </svg>
+      <div class="formula formula-block">当前总流量 = 4 + 6 + 4 + 5 = 19</div>
+      <p>把所有非零真实流量汇总起来：</p>
+      <table>
+        <thead><tr><th>边</th><th>最终流量 / 容量</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> A</code></td><td>10 / 10</td></tr>
+          <tr><td><code>s -> B</code></td><td>9 / 10</td></tr>
+          <tr><td><code>A -> C</code></td><td>4 / 4</td></tr>
+          <tr><td><code>A -> D</code></td><td>6 / 8</td></tr>
+          <tr><td><code>B -> D</code></td><td>9 / 9</td></tr>
+          <tr><td><code>D -> C</code></td><td>5 / 6</td></tr>
+          <tr><td><code>C -> t</code></td><td>9 / 10</td></tr>
+          <tr><td><code>D -> t</code></td><td>10 / 10</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="stop" class="card">
+      <h2>六、终止与最小割</h2>
+      <p>第 4 轮之后，再从 <code>s</code> 做 BFS。<code>s -> A</code> 正向残量为 0，<code>s -> B</code> 还剩 1，所以 <code>B</code> 可达；但 <code>B -> D</code> 正向残量已经为 0，无法继续进入 <code>D</code>。因此残量网络中从 <code>s</code> 可达的点只有：</p>
+      <div class="formula formula-block">S = {s, B}
+T = {A, C, D, t}</div>
+      <p>这个可达集合自然给出一个割。原图中从 <code>S</code> 指向 <code>T</code> 的边只有两条：</p>
+      <table>
+        <thead><tr><th>跨割边</th><th>容量</th><th>最终状态</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> A</code></td><td>10</td><td>满流</td></tr>
+          <tr><td><code>B -> D</code></td><td>9</td><td>满流</td></tr>
+        </tbody>
+      </table>
+      <div class="formula formula-block">cut(S, T) = c(s, A) + c(B, D) = 10 + 9 = 19
+当前流量 |f| = 19</div>
+      <blockquote>当前流量等于一个割的容量。因为任意流都不会超过任意割容量，所以当前流已经是最大流。</blockquote>
+    </section>
+
+    <section id="complexity" class="card">
+      <h2>七、复杂度为什么稳定</h2>
+      <p>Edmonds-Karp 的复杂度是：</p>
+      <div class="formula formula-block">O(V * E^2)</div>
+      <p>直觉上可以这样理解：</p>
+      <div class="grid2">
+        <div class="box note">
+          <span class="label">每轮 BFS</span>
+          <p>在残量网络上扫描边，代价是 <code>O(E)</code>。</p>
+        </div>
+        <div class="box example">
+          <span class="label">增广轮数</span>
+          <p>每次某条边成为瓶颈后，如果未来还想再次作为关键边出现，它到源点的 BFS 层数必须增加。这样的层数增加次数受 <code>V</code> 限制。</p>
+        </div>
+      </div>
+      <p>更形式化地说，BFS 保证残量网络中点到源点的最短距离不会因为一次增广而随意下降；每条边被“关键饱和”的次数是有限的，整体增广次数可界定在 <code>O(VE)</code>，乘上每轮 BFS 的 <code>O(E)</code>，得到 <code>O(VE^2)</code>。</p>
+      <p>这个上界通常比朴素 Ford-Fulkerson 的 <code>O(E * F)</code> 更稳定，因为它不依赖最大流值 <code>F</code> 的数值大小。</p>
+    </section>
+
+    <section id="practice" class="card">
+      <h2>八、实现要点</h2>
+      <ul>
+        <li>用邻接表存残量边，每条边都配一条反向边，更新时同时改正反两条边的残量。</li>
+        <li>BFS 只走残量大于 0 的边，并记录父节点、父边和路径瓶颈。</li>
+        <li>如果容量是整数，最大流一定是整数；Edmonds-Karp 即使容量较大，也不会像朴素路径选择那样受 <code>F</code> 直接控制。</li>
+        <li>工程上如果图很大，常用 Dinic 获得更好的实践性能；但理解 Edmonds-Karp 是掌握 Dinic 分层图思想的很好前置。</li>
+      </ul>
+    </section>
+
+    <footer><p>相关延伸：可以继续阅读最大流总览、Ford-Fulkerson 推导，以及后续的 Dinic 或最小费用最大流内容。</p></footer>
+  </main>
+</body>
+</html>
