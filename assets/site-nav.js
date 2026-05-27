@@ -6,6 +6,7 @@
   const links = [
     { label: "首页", path: "index.html" },
     { label: "物流运筹", path: "topics/logistics-or/index.html" },
+    { label: "宏观经济", path: "topics/macro-economics/index.html" },
     { label: "思考专题", path: "topics/think/index.html" }
   ];
 
