@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CodeWhale Coding Agent 调研总览</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Research · DeepSeek V4 Coding Agent</div>
+      <h1>CodeWhale 技术调研总览</h1>
+      <p class="intro">围绕 <a href="https://github.com/Hmbown/CodeWhale">Hmbown/CodeWhale</a> 的本地源码快照，梳理 agent 编排、DeepSeek prefix cache 优化、平台沙箱、runtime API 与远程控制路径。</p>
+      <div class="meta">
+        <span class="tag">CodeWhale 0.8.46</span>
+        <span class="tag green">commit 54151a4b</span>
+        <span class="tag orange">未挂首页</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#scope">调研口径</a>
+      <a href="#conclusion">核心结论</a>
+      <a href="#docs">文档集合</a>
+      <a href="#architecture">技术全景</a>
+      <a href="#risks">关键判断</a>
+      <a href="#sources">资料来源</a>
+    </nav>
+
+    <section class="summary" id="scope">
+      <h2>调研口径</h2>
+      <p>本次调研对象是 CodeWhale 公开仓库。调研前已同步远程 <code>main</code> 与 tags，分析基于源码快照 <code>54151a4bc942af69f55298cae986858cd02100d1</code>。</p>
+      <p>CodeWhale 自称是面向 DeepSeek V4 的 terminal coding agent。它不是 Node agent，npm 包更像安装器，实际运行时是一组 Rust 二进制: <code>codewhale</code> dispatcher 加 <code>codewhale-tui</code> companion runtime。</p>
+    </section>
+
+    <section class="card" id="conclusion">
+      <h2>核心结论</h2>
+      <div class="summary-grid">
+        <div class="mini-card">
+          <h3>编排核心</h3>
+          <p>活跃运行时代码仍集中在 <code>crates/tui</code>。每轮由 <code>handle_deepseek_turn</code> 驱动，串起系统提示刷新、token 预算、prefix-cache 稳定性检查、OpenAI-compatible streaming、工具规划、审批、并行/串行执行、LSP 后置诊断和上下文控制。</p>
+        </div>
+        <div class="mini-card">
+          <h3>Prefix Cache</h3>
+          <p>CodeWhale 把 DeepSeek V4 的 1M context 和 prefix cache 当作主架构约束: 默认晚压缩、保持历史 turn metadata 不重写、forked subagent 复用父请求前缀，并通过 cache hit/miss 计算成本。</p>
+        </div>
+        <div class="mini-card">
+          <h3>沙箱边界</h3>
+          <p>macOS Seatbelt 路径是明确执行的。Linux 有 Landlock、seccomp、process hardening 和 bwrap 代码，但当前常规 Landlock 执行路径只设置标记，真正命令级隔离依赖可选 bwrap 或后续 helper。</p>
+        </div>
+        <div class="mini-card">
+          <h3>远程通道</h3>
+          <p>runtime API 是 local-first 的 HTTP/SSE API，默认绑定 <code>127.0.0.1:7878</code>，当前代码会在无 token 时生成临时 bearer token。远程方案主要是 Tencent Lighthouse 加 Feishu/Lark 长连接桥，而不是把 <code>/v1/*</code> 暴露到公网。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="docs">
+      <h2>文档集合</h2>
+      <div class="grid">
+        <article class="card">
+          <div class="card-head">
+            <span class="tag">01</span>
+            <h3>Agent 编排</h3>
+          </div>
+          <p class="desc">从 Rust 二进制、TUI engine、streaming state、tool planning、parallel batches、approval flow、LSP hooks 到 subagent 生命周期，解释一轮 CodeWhale turn 如何推进。</p>
+          <div class="actions">
+            <a class="button primary" href="orchestration.html">打开文档</a>
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head">
+            <span class="tag green">02</span>
+            <h3>Prefix Cache 与上下文经济学</h3>
+          </div>
+          <p class="desc">拆解 PrefixStabilityManager、fork_context、resident_file、晚压缩、cycle restart、capacity controller、reasoning replay、spillover 和成本估算。</p>
+          <div class="actions">
+            <a class="button primary" href="prefix-cache.html">打开文档</a>
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head">
+            <span class="tag orange">03</span>
+            <h3>沙箱与权限</h3>
+          </div>
+          <p class="desc">核对 Plan/Agent/YOLO 模式、工具暴露、审批、命令策略、macOS Seatbelt、Linux bwrap/Landlock/seccomp 和文档漂移风险。</p>
+          <div class="actions">
+            <a class="button primary" href="sandbox-permissions.html">打开文档</a>
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head">
+            <span class="tag purple">04</span>
+            <h3>Runtime API 与远程通道</h3>
+          </div>
+          <p class="desc">说明 <code>codewhale serve --http</code>、SSE thread events、tasks/automations/approvals、app-server、ACP/MCP、Tencent Lighthouse 和 Feishu/Lark bridge。</p>
+          <div class="actions">
+            <a class="button primary" href="remote-runtime.html">打开文档</a>
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head">
+            <span class="tag red">05</span>
+            <h3>源码证据索引</h3>
+          </div>
+          <p class="desc">集中列出关键文件、源码行号、配置文档和实现判断，方便继续复核或与 Reasonix 调研做横向比较。</p>
+          <div class="actions">
+            <a class="button primary" href="source-map.html">打开文档</a>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="card" id="architecture">
+      <h2>技术全景</h2>
+      <pre class="diagram"><code>codewhale dispatcher
+        |
+        v
+codewhale-tui runtime in crates/tui
+        |
+        v
+Engine::handle_deepseek_turn()
+  |-- refresh system prompt and tool catalog
+  |-- budget, cycle, compaction and capacity checkpoints
+  |-- prefix-cache stability fingerprint
+  |-- DeepSeek/OpenAI-compatible chat completions stream
+  |-- parse content, thinking, tool call deltas
+  |-- plan tool execution batches
+  |-- approval, sandbox policy, snapshots, spillover
+  |-- LSP diagnostics and working-set updates
+        |
+        v
+subagents / RLM / MCP / runtime API / local session store</code></pre>
+      <p>CodeWhale 的工程取向是“把编码 agent 做成本地 runtime”。TUI 是主入口，但同一套 runtime 还向 HTTP/SSE、ACP、任务队列、automation、Feishu/Lark bridge 和 app-server 暴露能力。</p>
+    </section>
+
+    <section class="card" id="risks">
+      <h2>关键判断</h2>
+      <div class="compare">
+        <div class="good">
+          <h3>值得借鉴</h3>
+          <p>CodeWhale 对 DeepSeek V4 的适配比普通 OpenAI-compatible wrapper 更深: 它处理 thinking/reasoning content、prefix-cache 稳定性、1M context、cache hit/miss 成本、auto model routing 和子 agent 前缀复用。</p>
+        </div>
+        <div class="warning">
+          <h3>需要谨慎</h3>
+          <p>仓库正在拆分 crate，文档和实现存在局部漂移。尤其是 Linux 沙箱，文档描述比当前常规执行路径更强。调研或复用时应以 <code>crates/tui</code> 活跃路径为准。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="sources">
+      <h2>资料来源</h2>
+      <ul>
+        <li><a href="https://github.com/Hmbown/CodeWhale">GitHub: Hmbown/CodeWhale</a></li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/tree/54151a4bc942af69f55298cae986858cd02100d1">源码快照: 54151a4bc942af69f55298cae986858cd02100d1</a></li>
+      </ul>
+      <p>每个专题页底部都给出关键源码入口。更完整的文件和行号索引见 <a href="source-map.html">源码证据索引</a>。</p>
+    </section>
+  </main>
+</body>
+</html>

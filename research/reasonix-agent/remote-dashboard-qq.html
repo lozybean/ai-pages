@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reasonix Dashboard、QQ 与远程通道</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Reasonix Research · Remote Channels</div>
+      <h1>Dashboard、QQ 与远程通道</h1>
+      <p class="intro">Reasonix 没有内置通用反向 tunnel。它提供的是本地 dashboard 控制面、QQ Bot 远程消息入口，以及 ACP stdio/JSON-RPC 集成协议。</p>
+      <div class="meta">
+        <span class="tag">Dashboard Server</span>
+        <span class="tag green">QQ Channel</span>
+        <span class="tag purple">ACP</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#conclusion">结论</a>
+      <a href="#dashboard">Dashboard</a>
+      <a href="#modals">远程审批</a>
+      <a href="#qq">QQ Channel</a>
+      <a href="#acp">ACP</a>
+      <a href="#tunnel">Tunnel 口径</a>
+      <a href="#recommendations">部署建议</a>
+      <a href="#sources">源码位置</a>
+    </nav>
+
+    <section class="summary" id="conclusion">
+      <h2>结论</h2>
+      <p>Reasonix 的远程能力分成三层：dashboard 是本地 HTTP 控制面；QQ channel 是把用户消息和 agent 回复映射到 QQ Bot WebSocket/HTTP API；ACP 是面向其他 host 程序的 stdio JSON-RPC 协议。</p>
+      <p>源码中没有看到 cloudflared、ngrok、frp、Tailscale Funnel 或自研 reverse tunnel。若需要跨网络访问 dashboard，推荐把 tunnel 当作外部部署层，而不是 Reasonix 内置能力。</p>
+    </section>
+
+    <section class="card" id="dashboard">
+      <h2>Dashboard：本地 token-gated HTTP server</h2>
+      <p>Dashboard server 默认绑定 <code>127.0.0.1</code>，端口可配置或自动选择。启动后 URL 带 <code>?token=...</code>，token 可显式提供，也可由配置生成 32-byte token。</p>
+      <ul>
+        <li>读请求接受 header token 或 query token。</li>
+        <li>mutation 请求要求 <code>X-Reasonix-Token</code> header，用于降低 CSRF 风险。</li>
+        <li>SPA HTML、assets、SSE events、API 都在 token gate 之后。</li>
+        <li>非 loopback host 会给出警告，提示这会把控制面暴露给其他设备。</li>
+      </ul>
+      <div class="formula formula-block"><code>Dashboard = local control plane + bearer-like token + SSE event stream + modal resolution APIs</code></div>
+    </section>
+
+    <section class="card" id="modals">
+      <h2>远程审批：dashboard 与 TUI 共用同一 PauseGate</h2>
+      <p>Dashboard 不是只读面板。它可以拿到 active modal snapshot，并通过 <code>/api/modal/resolve</code> 解析 shell、path、choice、plan、edit-review、checkpoint、revision、picker、viewer 等交互。</p>
+      <p>这与 Reasonix 的权限模型是一体的：本地 TUI 看到的确认弹窗，dashboard 也能镜像并解析。优点是移动端或浏览器远程操作完整；风险是 dashboard token 泄漏时，攻击者也可能解析这些确认。</p>
+      <div class="warning">
+        <p>mutation 要求 header token，但这不是强认证系统。不要把 dashboard URL 公开发布，也不要在没有 TLS 的公网链路中传递 token。</p>
+      </div>
+    </section>
+
+    <section class="card" id="qq">
+      <h2>QQ Channel：远程消息入口，而非独立 agent</h2>
+      <p>QQ 文档和代码都强调：QQ channel 是 attach 到已有 chat/code/desktop session 的远程通道。它向本地 session 提交 <code>[QQ] ...</code> 用户消息，并把 Reasonix 回复分块发送回 QQ。</p>
+      <div class="summary-grid">
+        <div class="mini-card">
+          <h3>连接方式</h3>
+          <p>通过 QQ Bot access token 和 gateway WebSocket 建连。gateway URL 必须是 wss，且 host 在可信 QQ 域名集合中。</p>
+        </div>
+        <div class="mini-card">
+          <h3>单例锁</h3>
+          <p>使用 <code>~/.reasonix/qq-channel.pid</code> 做单例锁，避免同一个本地 runtime 被多个 channel 重复驱动。</p>
+        </div>
+        <div class="mini-card">
+          <h3>访问控制</h3>
+          <p>支持 owner、allowlist 和 runtime-bound first sender。若未配置 owner/allowlist，首个发送者会绑定 runtime。</p>
+        </div>
+        <div class="mini-card">
+          <h3>消息限制</h3>
+          <p>QQ 回复会按 1500 byte 限制分块，并在 markdown 发送失败时 fallback 到普通文本。</p>
+        </div>
+      </div>
+      <div class="note">
+        <p>QQ channel 可以继续确认、选择、checkpoint、plan 等互动，这让它更像“远程控制通道”，而不是单纯通知通道。</p>
+      </div>
+    </section>
+
+    <section class="card" id="acp">
+      <h2>ACP：面向 host 集成的 stdio JSON-RPC</h2>
+      <p>ACP server 是 NDJSON JSON-RPC 2.0：一行一个 JSON 对象，通过 stdin/stdout 传输。它支持 request、notification、outbound request 和响应关联。</p>
+      <p>这条路径更适合 IDE、桌面宿主或其他进程把 Reasonix 嵌进去。它不是网络 tunnel，而是本机进程间协议；权限请求可以通过 ACP gate 映射到 host 侧的 permission UI。</p>
+    </section>
+
+    <section class="card" id="tunnel">
+      <h2>Tunnel 口径：Reasonix 没有内置反向隧道</h2>
+      <p>如果产品文案里提到从手机、浏览器或 QQ 继续会话，需要区分三件事：</p>
+      <table>
+        <thead>
+          <tr>
+            <th>能力</th>
+            <th>Reasonix 内置</th>
+            <th>备注</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>本地 dashboard</td>
+            <td>是</td>
+            <td>HTTP server，默认 loopback，token gate。</td>
+          </tr>
+          <tr>
+            <td>LAN/SSH tunnel 访问</td>
+            <td>部分</td>
+            <td>可配置 host/port，但 tunnel 由外部网络层提供。</td>
+          </tr>
+          <tr>
+            <td>QQ Bot 远程入口</td>
+            <td>是</td>
+            <td>通过 QQ 官方 WebSocket gateway 和 HTTP API。</td>
+          </tr>
+          <tr>
+            <td>通用公网 reverse tunnel</td>
+            <td>否</td>
+            <td>未发现 cloudflared/ngrok/frp 类实现。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="recommendations">
+      <h2>部署建议</h2>
+      <ul>
+        <li>Dashboard 保持默认 <code>127.0.0.1</code>，需要手机访问时优先用 SSH tunnel 或可信 LAN。</li>
+        <li>如果必须绑定 <code>0.0.0.0</code>，使用长随机 token，并放在受控网络内。</li>
+        <li>QQ channel 建议配置 owner 或 allowlist，避免 first-sender 绑定在初始化阶段被错误用户抢占。</li>
+        <li>把 dashboard token 当作高敏凭据处理，不写进公开文档、截图或聊天记录。</li>
+      </ul>
+    </section>
+
+    <section class="card" id="sources">
+      <h2>源码位置</h2>
+      <ul>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/server/index.ts#L1-L243"><code>src/server/index.ts:1-243</code></a>：dashboard token、host/port、SSE/API gate。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/server/api/events.ts#L1-L70"><code>src/server/api/events.ts:1-70</code></a>：SSE event stream 和初始 snapshot。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/server/api/modal.ts#L53-L194"><code>src/server/api/modal.ts:53-194</code></a>：dashboard modal resolution。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/qq/bot.ts#L58-L168"><code>src/qq/bot.ts:58-168</code></a>：QQ gateway 校验、握手和消息处理。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/qq/channel.ts#L95-L286"><code>src/qq/channel.ts:95-286</code></a>：单例锁、访问控制、启动与回复分块。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/qq/access.ts#L48-L72"><code>src/qq/access.ts:48-72</code></a>：owner、allowlist、runtime-bound first sender 判定。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/acp/server.ts#L1-L143"><code>src/acp/server.ts:1-143</code></a>：ACP NDJSON JSON-RPC server。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

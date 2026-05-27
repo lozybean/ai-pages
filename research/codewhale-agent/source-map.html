@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CodeWhale 源码证据索引</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">CodeWhale Research · Source Map</div>
+      <h1>源码证据索引</h1>
+      <p class="intro">集中列出本次调研引用过的关键源码位置、文档入口和工程判断，便于继续追踪或与其他 DeepSeek coding agent 横向比较。</p>
+      <div class="meta">
+        <span class="tag">commit 54151a4b</span>
+        <span class="tag green">source snapshot</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#repo">仓库快照</a>
+      <a href="#architecture">架构与入口</a>
+      <a href="#loop">Turn Loop</a>
+      <a href="#cache">Prefix Cache</a>
+      <a href="#subagents">Subagents</a>
+      <a href="#sandbox">Sandbox</a>
+      <a href="#remote">Runtime API</a>
+      <a href="#notes">注意事项</a>
+    </nav>
+
+    <section class="summary" id="repo">
+      <h2>仓库快照</h2>
+      <ul>
+        <li>远程仓库：<a href="https://github.com/Hmbown/CodeWhale">https://github.com/Hmbown/CodeWhale</a></li>
+        <li>调研 commit：<a href="https://github.com/Hmbown/CodeWhale/tree/54151a4bc942af69f55298cae986858cd02100d1"><code>54151a4bc942af69f55298cae986858cd02100d1</code></a></li>
+        <li>本地分支：<code>main</code> 与 <code>origin/main</code> 一致，<code>git describe origin/main</code> 为 <code>v0.8.46-49-g54151a4b</code>。</li>
+        <li>workspace version：<code>0.8.46</code>，Rust edition 2024，rust-version 1.88。</li>
+      </ul>
+    </section>
+
+    <section class="card" id="architecture">
+      <h2>架构与入口</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>源码/文档</th>
+            <th>证据</th>
+            <th>工程含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/README.md#L10-L15"><code>README.md:10-15</code></a></td>
+            <td>npm wrapper 安装 Rust binary pair。</td>
+            <td>运行时不是 Node agent，而是 <code>codewhale</code> 加 <code>codewhale-tui</code>。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/docs/ARCHITECTURE.md#L5-L11"><code>ARCHITECTURE.md:5-11</code></a></td>
+            <td><code>crates/tui</code> 仍是 live runtime source of truth。</td>
+            <td>调研实现时优先看 TUI runtime，不只看拆分 crate。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/docs/ARCHITECTURE.md#L103-L119"><code>ARCHITECTURE.md:103-119</code></a></td>
+            <td>DeepSeek Chat Completions endpoints，默认 beta URL。</td>
+            <td>主流程走 OpenAI-compatible Chat Completions，不走 Responses API。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="loop">
+      <h2>Turn Loop</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>源码/文档</th>
+            <th>证据</th>
+            <th>工程含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/core/engine/turn_loop.rs#L1-L22"><code>turn_loop.rs:1-22</code></a></td>
+            <td>文件头定义 per-turn orchestration 范围。</td>
+            <td>这是 agent 编排的最关键入口。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/core/engine/turn_loop.rs#L175-L305"><code>turn_loop.rs:175-305</code></a></td>
+            <td>容量检查、active tools、reasoning effort、prefix-cache 检查、MessageRequest。</td>
+            <td>模型请求前完成预算、工具和 cache 稳定性准备。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/core/engine/streaming.rs#L25-L68"><code>streaming.rs:25-68</code></a></td>
+            <td>stream idle timeout、wall-clock cap、content byte cap、错误预算。</td>
+            <td>长流式响应有硬性 guardrail。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/core/engine/dispatch.rs#L38-L52"><code>dispatch.rs:38-52</code></a></td>
+            <td><code>ToolExecutionPlan</code> 字段。</td>
+            <td>工具执行先规划，再决定审批、并行、只读、阻断。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/core/engine/turn_loop.rs#L1161-L1908"><code>turn_loop.rs:1161-1908</code></a></td>
+            <td>工具规划、执行、审批、snapshot、spillover、LSP hook。</td>
+            <td>本地执行是分层调度，不是直接跑模型给的命令。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/client/chat.rs#L143-L183"><code>client/chat.rs:143-183</code></a></td>
+            <td>streaming request 使用 <code>stream_options.include_usage=true</code>。</td>
+            <td>usage 和 cache telemetry 能随流式结果回收。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="cache">
+      <h2>Prefix Cache</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>源码/文档</th>
+            <th>证据</th>
+            <th>工程含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/prefix_cache.rs#L1-L30"><code>prefix_cache.rs:1-30</code></a></td>
+            <td>三段式上下文模型。</td>
+            <td>稳定前缀、append-only history、latest user turn 分层。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/prefix_cache.rs#L51-L76"><code>prefix_cache.rs:51-76</code></a></td>
+            <td>fingerprint hash system prompt 和 sorted tool names。</td>
+            <td>检测轻量有效，但不覆盖完整 tool schema 漂移。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/models.rs#L210-L299"><code>models.rs:210-299</code></a></td>
+            <td>V4 1M context 和 80% compaction threshold。</td>
+            <td>V4 replacement compaction 不因 reasoning effort 降阈值。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/compaction.rs#L43-L105"><code>compaction.rs:43-105</code></a></td>
+            <td>自动 replacement compaction opt-in，500K floor。</td>
+            <td>避免过早破坏 KV cache。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/cycle_manager.rs#L1-L41"><code>cycle_manager.rs:1-41</code></a></td>
+            <td>checkpoint-restart cycle，默认 768K trigger。</td>
+            <td>用新 cycle 替代过度 lossy summary。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/docs/capacity_controller.md#L1-L7"><code>capacity_controller.md:1-7</code></a></td>
+            <td>capacity controller 默认关闭，因为会破坏 prefix-cache affinity。</td>
+            <td>容量控制主要是 opt-in guardrail。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="subagents">
+      <h2>Subagents</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>源码/文档</th>
+            <th>证据</th>
+            <th>工程含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/docs/SUBAGENTS.md#L37-L49"><code>SUBAGENTS.md:37-49</code></a></td>
+            <td><code>fork_context</code> 保留父 prefill/prompt prefix。</td>
+            <td>并行视角 fanout 时复用 DeepSeek prefix cache。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/tools/subagent/mod.rs#L920-L970"><code>subagent/mod.rs:920-970</code></a></td>
+            <td><code>background_runtime</code> 与 <code>child_runtime</code>。</td>
+            <td>后台子 agent 与父 turn cancellation 解耦，显式关闭。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/tools/subagent/mod.rs#L1883-L2028"><code>subagent/mod.rs:1883-2028</code></a></td>
+            <td><code>agent_open</code> 描述和 schema。</td>
+            <td>新表面是持久命名 session，而不是一次性工具调用。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/tools/subagent/mod.rs#L2342-L2418"><code>subagent/mod.rs:2342-2418</code></a></td>
+            <td><code>resident_file</code> 注入和 lease。</td>
+            <td>围绕大文件的子 agent 可以保持文件前缀稳定。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/tools/subagent/mod.rs#L3507-L3631"><code>subagent/mod.rs:3507-3631</code></a></td>
+            <td>完成后发送 human summary 和 <code>&lt;codewhale:subagent.done&gt;</code>。</td>
+            <td>父上下文只接收轻量 sentinel，完整 transcript 通过 handle 拉取。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="sandbox">
+      <h2>Sandbox</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>源码/文档</th>
+            <th>证据</th>
+            <th>工程含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/core/engine/tool_setup.rs#L10-L33"><code>tool_setup.rs:10-33</code></a></td>
+            <td>Plan read-only、Agent workspace-write + network、YOLO danger。</td>
+            <td>安全边界从 mode 开始。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/sandbox/mod.rs#L398-L425"><code>sandbox/mod.rs:398-425</code></a></td>
+            <td>macOS 生成 <code>sandbox-exec</code> command。</td>
+            <td>Seatbelt 是实际包装执行路径。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/sandbox/mod.rs#L430-L466"><code>sandbox/mod.rs:430-466</code></a></td>
+            <td>Linux prefer_bwrap 时用 bwrap，否则 marker only Landlock。</td>
+            <td>Linux 常规路径不能夸大成强隔离。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/sandbox/process_hardening.rs#L33-L56"><code>process_hardening.rs:33-56</code></a></td>
+            <td>Linux process-level hardening。</td>
+            <td>保护父进程和后代权限提升，不是 per-command FS sandbox。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/docs/CONFIGURATION.md#L451-L457"><code>CONFIGURATION.md:451-457</code></a></td>
+            <td>Windows 不宣传 OS sandbox。</td>
+            <td>文档中较保守的表述更贴近实现边界。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="remote">
+      <h2>Runtime API</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>源码/文档</th>
+            <th>证据</th>
+            <th>工程含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/runtime_api.rs#L65-L94"><code>runtime_api.rs:65-94</code></a></td>
+            <td>默认 host/port/workers/auth options。</td>
+            <td>HTTP API 默认 local-first。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/runtime_api.rs#L102-L124"><code>runtime_api.rs:102-124</code></a></td>
+            <td>默认生成 runtime token。</td>
+            <td>当前代码不是无认证默认裸奔。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/runtime_api.rs#L476-L536"><code>runtime_api.rs:476-536</code></a></td>
+            <td><code>/health</code>、<code>/v1/runtime/info</code> 和 protected <code>/v1/*</code>。</td>
+            <td>监控路由和控制路由权限不同。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/runtime_api.rs#L1305-L1469"><code>runtime_api.rs:1305-1469</code></a></td>
+            <td>SSE event backlog + live subscribe。</td>
+            <td>远程 UI 可以消费事件流，而不用嵌入 TUI。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/docs/TENCENT_CLOUD_REMOTE_FIRST.md#L96-L113"><code>TENCENT_CLOUD_REMOTE_FIRST.md:96-113</code></a></td>
+            <td>EdgeOne 只用于 public HTTPS，不代理 <code>/v1/*</code>。</td>
+            <td>官方远程路径反对公网暴露 runtime API。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="notes">
+      <h2>注意事项</h2>
+      <div class="summary-grid">
+        <div class="mini-card">
+          <h3>活跃路径</h3>
+          <p>仓库在 crate 化迁移中，调研实现优先看 <code>crates/tui</code>，再看拆分 crate 和 docs。</p>
+        </div>
+        <div class="mini-card">
+          <h3>文档漂移</h3>
+          <p><code>docs/SANDBOX.md</code> 对 Linux enforcement 的描述比当前常规执行路径更强。</p>
+        </div>
+        <div class="mini-card">
+          <h3>认证漂移</h3>
+          <p><code>docs/RUNTIME_API.md</code> 部分表述提到 no auth default，但当前源码默认生成 token。</p>
+        </div>
+        <div class="mini-card">
+          <h3>Cache 检测粒度</h3>
+          <p>PrefixStabilityManager 看 system prompt 和 tool names，未 hash 完整 tool schema。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

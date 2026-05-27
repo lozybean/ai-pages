@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reasonix 沙箱与权限模型</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Reasonix Research · Sandbox & Permissions</div>
+      <h1>沙箱与权限模型</h1>
+      <p class="intro">Reasonix 的“沙箱”是应用层安全边界：项目根目录约束、命令 allowlist、敏感路径降级、确认闸门和 edit gate。它没有实现 OS 级隔离。</p>
+      <div class="meta">
+        <span class="tag">rootDir sandbox</span>
+        <span class="tag green">PauseGate</span>
+        <span class="tag orange">shell:false</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#position">边界判断</a>
+      <a href="#filesystem">文件系统</a>
+      <a href="#shell">Shell 命令</a>
+      <a href="#edit">编辑闸门</a>
+      <a href="#modes">模式与配置</a>
+      <a href="#risks">风险矩阵</a>
+      <a href="#recommendations">部署建议</a>
+      <a href="#sources">源码位置</a>
+    </nav>
+
+    <section class="summary" id="position">
+      <h2>边界判断</h2>
+      <p>如果把“沙箱”理解为 macOS Seatbelt、Linux Landlock/seccomp、container namespace 或虚拟机隔离，Reasonix 当前没有这类实现。它的工具进程仍以当前用户身份运行。</p>
+      <p>如果把“沙箱”理解为 agent 工具层边界，Reasonix 做得相当细：路径解析默认钉在 workspace root，外部路径需要确认，shell 命令逐 segment tokenize 和 allowlist，危险参数和敏感路径会让命令降级为需确认。</p>
+      <div class="quote">
+        <p>结论：Reasonix 的安全模型适合“本地可信用户 + 明确确认高风险动作”，不适合被当成可公开暴露的强隔离执行环境。</p>
+      </div>
+    </section>
+
+    <section class="card" id="filesystem">
+      <h2>文件系统：rootDir、safePath 与外部路径审批</h2>
+      <p>文件工具以 <code>rootDir</code> 为边界。相对路径、以 <code>/</code> 开头的项目绝对路径、以及 OS 绝对路径都会进入统一的 <code>safePath</code> 解析流程。</p>
+      <ul>
+        <li>普通相对路径必须解析到 rootDir 内，否则报 sandbox escape。</li>
+        <li>OS 绝对路径如果在 rootDir 外，会触发 <code>path_access</code> 确认。</li>
+        <li>确认支持 deny、run_once、always_allow。always_allow 会把路径前缀写入项目配置。</li>
+        <li>文件读取、目录列举、搜索等 read-only 工具可 parallel-safe；写入工具需要额外经过写 gate。</li>
+      </ul>
+      <div class="warning">
+        <p>外部路径的 always_allow 是便利性功能，也是权限扩大点。对 <code>~/</code> 或上层目录做持久允许，会明显弱化 root sandbox 的意义。</p>
+      </div>
+    </section>
+
+    <section class="card" id="shell">
+      <h2>Shell 命令：不走系统 shell，但仍是用户进程</h2>
+      <p><code>run_command</code> 和 <code>run_background</code> 的 cwd pinned 到 rootDir。底层执行使用 <code>spawn(..., { shell: false })</code>，并通过 tokenizer 解析 argv，避免直接交给 shell 展开环境变量、glob、反引号或命令替换。</p>
+      <p>Reasonix 内置一组 safe-ish allowlist，例如只读 git、ls/pwd/cat/head/tail/wc/file/tree/find/grep/rg、版本查询、常见测试和 lint 命令。命令链会逐 segment 检查，pipe、逻辑运算、重定向都会被解析，heredoc 和后台 <code>&</code> 被拒绝。</p>
+      <div class="summary-grid">
+        <div class="mini-card">
+          <h3>Allowlist prefix</h3>
+          <p>命令按 argv prefix 匹配，而不是按原始字符串包含判断。</p>
+        </div>
+        <div class="mini-card">
+          <h3>Risky args</h3>
+          <p><code>find -delete</code>、<code>find -exec</code>、<code>eslint --fix</code>、<code>ruff --fix</code> 等会让命令降级为需确认。</p>
+        </div>
+        <div class="mini-card">
+          <h3>Sensitive paths</h3>
+          <p><code>~/.ssh</code>、<code>~/.aws</code>、<code>*.env</code>、<code>*.pem</code>、secret/credential 相关路径会触发敏感路径判断。</p>
+        </div>
+        <div class="mini-card">
+          <h3>Redirect checks</h3>
+          <p>重定向目标必须留在 sandbox 内，并做 realpath/symlink escape 检查。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="edit">
+      <h2>编辑闸门：read-before-edit 与 review/auto/yolo</h2>
+      <p>文件编辑不是直接写。<code>edit_file</code> 和 <code>multi_edit</code> 要求目标文件在本 session 中已读过，否则拒绝。单文件编辑要求 SEARCH 块精确唯一匹配；multi-edit 会先验证所有 edits，再进入写阶段，失败时尝试回滚已写文件。</p>
+      <p>用户配置中的 <code>editMode</code> 是主要信任拨盘：</p>
+      <table>
+        <thead>
+          <tr>
+            <th>模式</th>
+            <th>含义</th>
+            <th>安全影响</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>review</code></td>
+            <td>编辑进入 review gate，shell 仍需 gate。</td>
+            <td>默认较稳，适合日常使用。</td>
+          </tr>
+          <tr>
+            <td><code>auto</code></td>
+            <td>自动应用编辑，但 shell 仍需 gate。</td>
+            <td>提高效率，但文件修改更依赖模型判断。</td>
+          </tr>
+          <tr>
+            <td><code>yolo</code></td>
+            <td>跳过编辑和 shell gate。</td>
+            <td>不适合含敏感凭据或高价值代码库的机器。</td>
+          </tr>
+          <tr>
+            <td><code>plan</code></td>
+            <td>阻止所有非 read-only 工具。</td>
+            <td>适合只做设计、审阅和探索。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="modes">
+      <h2>模式与配置：权限是可持久化的</h2>
+      <p>项目配置会保存 shell allowlist、hooksTrusted、pathAllowed、dashboard 和模型偏好。<code>PauseGate</code> 是工具层与 UI 层的桥：shell、path、plan、choice、checkpoint、revision 等确认请求都会通过它发起和解析。</p>
+      <p>这意味着权限审批既能在 TUI 中完成，也能被 dashboard 或远程通道承接。功能上很顺滑，但也要求远程通道本身不能被随意暴露。</p>
+    </section>
+
+    <section class="card" id="risks">
+      <h2>风险矩阵</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>风险</th>
+            <th>Reasonix 现有缓解</th>
+            <th>剩余风险</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>模型执行破坏性命令</td>
+            <td>allowlist、危险参数降级、PauseGate、plan mode。</td>
+            <td>用户批准或 yolo 后，命令仍以当前用户身份运行。</td>
+          </tr>
+          <tr>
+            <td>读取敏感文件</td>
+            <td>rootDir 限制、外部路径审批、敏感路径检测。</td>
+            <td>持久允许宽路径后，模型可继续访问该路径前缀。</td>
+          </tr>
+          <tr>
+            <td>命令注入</td>
+            <td><code>shell:false</code>、argv tokenize、拒绝 heredoc/backticks/substitution。</td>
+            <td>允许的可执行文件自身仍可能执行二级逻辑。</td>
+          </tr>
+          <tr>
+            <td>dashboard 被远程滥用</td>
+            <td>token gate、mutation header、非 loopback 警告。</td>
+            <td>无内置 TLS；token 泄漏即相当于控制面暴露。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="recommendations">
+      <h2>部署建议</h2>
+      <ul>
+        <li>默认保持 <code>review</code> 或 <code>auto</code>，只在临时、低风险目录使用 <code>yolo</code>。</li>
+        <li>不要把宽路径加入 <code>pathAllowed</code>。优先批准具体文件或具体子目录。</li>
+        <li>远程访问 dashboard 时优先用 SSH tunnel 或可信 LAN，不建议直接把 host 绑到公网地址。</li>
+        <li>在含生产凭据的机器上，把 Reasonix 当成本地工具，而不是强隔离执行沙箱。</li>
+      </ul>
+    </section>
+
+    <section class="card" id="sources">
+      <h2>源码位置</h2>
+      <ul>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/tools/filesystem.ts#L151-L218"><code>src/tools/filesystem.ts:151-218</code></a>：外部路径审批和 safePath。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/tools/shell.ts#L87-L205"><code>src/tools/shell.ts:87-205</code></a>：run_command 与 run_background 确认逻辑。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/tools/shell/parse.ts#L10-L70"><code>src/tools/shell/parse.ts:10-70</code></a>：内置 allowlist。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/tools/shell/parse.ts#L158-L378"><code>src/tools/shell/parse.ts:158-378</code></a>：危险参数、敏感路径和命令链判断。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/tools/shell-chain.ts#L1-L545"><code>src/tools/shell-chain.ts:1-545</code></a>：不经 shell 的命令链解析和执行。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/tools/fs/edit.ts#L9-L180"><code>src/tools/fs/edit.ts:9-180</code></a>：read-before-edit、精确匹配和 multi-edit 回滚。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/config.ts#L24-L25"><code>src/config.ts:24-25</code></a>：editMode 信任拨盘定义。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

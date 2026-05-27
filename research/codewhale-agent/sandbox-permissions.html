@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CodeWhale 沙箱与权限调研</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">CodeWhale Research · Sandbox</div>
+      <h1>沙箱、审批与真实权限边界</h1>
+      <p class="intro">CodeWhale 的安全模型分成三层: 模式决定工具暴露和 sandbox policy，审批决定单次高风险工具是否执行，平台 sandbox 决定命令进程能否被 OS 约束。</p>
+      <div class="meta">
+        <span class="tag">Plan / Agent / YOLO</span>
+        <span class="tag green">macOS Seatbelt</span>
+        <span class="tag orange">Linux bwrap optional</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#modes">模式与工具暴露</a>
+      <a href="#approval">审批流</a>
+      <a href="#platform">平台沙箱</a>
+      <a href="#linux">Linux 实现核对</a>
+      <a href="#docs-drift">文档漂移</a>
+      <a href="#recommendations">复用建议</a>
+      <a href="#sources">源码入口</a>
+    </nav>
+
+    <section class="summary" id="modes">
+      <h2>模式与工具暴露</h2>
+      <p><code>tool_setup.rs</code> 明确把 UI mode 映射成 sandbox policy。Plan 是 <code>ReadOnly</code>，Agent 是 workspace-write 加 network，YOLO 是 <code>DangerFullAccess</code>。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>模式</th>
+            <th>工具目录</th>
+            <th>沙箱策略</th>
+            <th>工程含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Plan</td>
+            <td>只读文件、搜索、git history、diagnostics、skill、validation、handle、runtime read-only task、todo/plan/goal。</td>
+            <td><code>ReadOnly</code></td>
+            <td>计划模式不暴露 shell、code execution、patch。它不是“执行但不批准”，而是目录层面拿掉危险工具。</td>
+          </tr>
+          <tr>
+            <td>Agent</td>
+            <td>完整 agent 工具、RLM/FIM、patch、web、shell 等按 feature 和 allow_shell 启用。</td>
+            <td><code>WorkspaceWrite</code>，workspace writable，network allowed。</td>
+            <td>默认工作模式，依赖审批和平台 sandbox 约束写入、网络、命令。</td>
+          </tr>
+          <tr>
+            <td>YOLO</td>
+            <td>高权限工具可直接运行。</td>
+            <td><code>DangerFullAccess</code></td>
+            <td>明确无护栏契约，不应被描述为安全执行模式。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="approval">
+      <h2>审批流</h2>
+      <p>每个工具在 plan 阶段会被标注是否需要审批。非只读 MCP、代码执行、写入、<code>agent_open</code> 等会触发 <code>ApprovalRequired</code>，用户可以批准、拒绝，或 retry with elevated sandbox policy。</p>
+      <pre class="diagram"><code>tool_uses from model
+  |
+  v
+ToolExecutionPlan
+  |-- blocked in Plan mode?
+  |-- caller allowed?
+  |-- canonical tool name resolved?
+  |-- read_only and supports_parallel?
+  |-- approval_required?
+        |
+        v
+ApprovalRequired event
+  |-- Approved: run with current policy
+  |-- Denied: return permission error
+  |-- RetryWithPolicy: rerun with elevated sandbox policy</code></pre>
+      <p>写文件相关工具执行前还会做 workspace snapshot。大输出会 spillover 到 session artifact，避免把完整输出塞回模型上下文。</p>
+    </section>
+
+    <section class="card" id="platform">
+      <h2>平台沙箱</h2>
+      <p><code>sandbox/mod.rs</code> 选择平台默认 sandbox: macOS 用 Seatbelt，Linux 检测 Landlock，Windows 当前不应宣传 OS 文件系统隔离。策略本身由 <code>SandboxPolicy</code> 表达，包括 read-only、workspace-write、danger-full-access 和 external-sandbox。</p>
+      <div class="summary-grid">
+        <div class="mini-card">
+          <h3>macOS</h3>
+          <p>实际通过 <code>/usr/bin/sandbox-exec</code> 包装命令，设置 <code>DEEPSEEK_SANDBOX=seatbelt</code>，策略文件由 readable/writable roots、network 等规则生成。</p>
+        </div>
+        <div class="mini-card">
+          <h3>Linux</h3>
+          <p>如果配置 <code>prefer_bwrap=true</code> 且 <code>/usr/bin/bwrap</code> 存在，则用 bubblewrap 包装命令。否则当前常规路径只设置 <code>DEEPSEEK_SANDBOX=landlock</code> 标记。</p>
+        </div>
+        <div class="mini-card">
+          <h3>Process hardening</h3>
+          <p>Linux TUI 启动时调用 <code>apply_process_hardening()</code>，设置 <code>PR_SET_DUMPABLE=0</code>、<code>PR_SET_NO_NEW_PRIVS=1</code> 和 <code>RLIMIT_CORE=0</code>。</p>
+        </div>
+        <div class="mini-card">
+          <h3>Windows</h3>
+          <p>配置文档明确说 Windows 当前不宣传 OS sandbox。规划中的 helper 首先是 process-tree containment，不是完整 AppContainer 或注册表隔离。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="linux">
+      <h2>Linux 实现核对</h2>
+      <p>Linux 是这次调研最需要谨慎表述的部分。仓库里确实有 <code>landlock.rs</code>、<code>seccomp.rs</code> 和 <code>process_hardening.rs</code>。其中 LandlockSandbox 和 seccomp BPF filter 都有相当完整的代码。但是当前 <code>SandboxManager::prepare_landlock</code> 没有把命令交给 Landlock helper，也没有调用 <code>LandlockSandbox::apply</code> 或 <code>apply_seccomp_filter</code>。</p>
+      <div class="warning">
+        <h3>关键结论</h3>
+        <p>在当前快照里，Linux shell 命令的强隔离路径是可选 bwrap；没有 bwrap 时，常规路径更像“标记为 landlock 的未隔离执行”。process hardening 保护的是父 TUI 进程和后代权限提升边界，不等价于 per-command 文件系统 sandbox。</p>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>能力</th>
+            <th>代码状态</th>
+            <th>应如何描述</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Landlock syscall 封装</td>
+            <td><code>landlock.rs</code> 有 ruleset、path rule、restrict_self。</td>
+            <td>存在模块和基础实现，但常规 prepare path 未实际调用。</td>
+          </tr>
+          <tr>
+            <td>seccomp filter</td>
+            <td><code>seccomp.rs</code> 有 raw BPF 和 <code>apply_seccomp_filter()</code>。</td>
+            <td>存在模块，但未发现命令执行路径调用。</td>
+          </tr>
+          <tr>
+            <td>bwrap</td>
+            <td><code>prefer_bwrap=true</code> 且 <code>/usr/bin/bwrap</code> 可用时构造 bwrap 命令。</td>
+            <td>当前 Linux 命令级强隔离的实际可用路径。</td>
+          </tr>
+          <tr>
+            <td>process hardening</td>
+            <td><code>main.rs</code> 启动早期调用。</td>
+            <td>防 ptrace、core dump 和 privilege escalation，属于 defense-in-depth。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="docs-drift">
+      <h2>文档漂移</h2>
+      <p><code>docs/SANDBOX.md</code> 对 Linux 的描述比 README 和实际常规路径更强，写到了 Landlock、seccomp、process hardening 组合 enforcement。与此同时，README 和配置文档更保守，强调 Linux helper-gated、Windows 不宣传 OS sandbox。</p>
+      <p>因此调研结论采用“以源码路径为准”的口径: macOS Seatbelt 是实装；Linux process hardening 是实装；Linux bwrap 在满足配置和环境时实装；Landlock/seccomp 是模块存在但命令路径未真正接入。</p>
+    </section>
+
+    <section class="card" id="recommendations">
+      <h2>复用建议</h2>
+      <div class="compare">
+        <div class="good">
+          <h3>可以借鉴</h3>
+          <p>模式层面收缩工具目录、工具层面审批、执行层面平台 sandbox、写入前 snapshot、执行后 LSP diagnostics，是一套清晰的 agent 安全分层。</p>
+        </div>
+        <div class="warning">
+          <h3>不要误用</h3>
+          <p>不要把 <code>DEEPSEEK_SANDBOX=landlock</code> 当成 Linux 文件系统强隔离证据。需要生产级 Linux 隔离时，应强制 bwrap、外部 sandbox backend，或补齐 Landlock/seccomp helper 并做端到端测试。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="sources">
+      <h2>源码入口</h2>
+      <ul>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/core/engine/tool_setup.rs#L10-L33"><code>tool_setup.rs:10-33</code></a>: Plan/Agent/YOLO 到 sandbox policy 的映射。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/core/engine/tool_setup.rs#L35-L90"><code>tool_setup.rs:35-90</code></a>: 不同模式暴露的工具 registry。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/core/engine/turn_loop.rs#L1673-L1785"><code>turn_loop.rs:1673-1785</code></a>: 审批流和 elevated sandbox policy。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/sandbox/mod.rs#L345-L380"><code>sandbox/mod.rs:345-380</code></a>: 平台 sandbox 选择和 prepare 入口。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/sandbox/mod.rs#L398-L425"><code>sandbox/mod.rs:398-425</code></a>: macOS Seatbelt 包装命令。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/sandbox/mod.rs#L430-L466"><code>sandbox/mod.rs:430-466</code></a>: Linux bwrap 或 marker-only Landlock 路径。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/sandbox/process_hardening.rs#L1-L120"><code>process_hardening.rs:1-120</code></a>: Linux process hardening。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/main.rs#L734-L741"><code>main.rs:734-741</code></a>: TUI 启动早期调用 process hardening。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

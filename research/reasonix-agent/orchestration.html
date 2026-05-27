@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reasonix Agent 编排机制</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Reasonix Research · Orchestration</div>
+      <h1>Agent 编排机制</h1>
+      <p class="intro">Reasonix 的主路径是一条 cache-first、stream-first、repair-first 的单 agent 循环。subagent 存在，但被定位成有成本边界的并行调查工具，而不是默认多智能体框架。</p>
+      <div class="meta">
+        <span class="tag">src/loop.ts</span>
+        <span class="tag green">src/loop/dispatch.ts</span>
+        <span class="tag orange">src/repair/*</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#shape">总体形态</a>
+      <a href="#loop">CacheFirstLoop</a>
+      <a href="#stream">模型流式响应</a>
+      <a href="#repair">工具调用修复</a>
+      <a href="#dispatch">工具调度</a>
+      <a href="#subagent">Subagent</a>
+      <a href="#takeaways">借鉴点</a>
+      <a href="#sources">源码位置</a>
+    </nav>
+
+    <section class="summary" id="shape">
+      <h2>总体形态</h2>
+      <p>Reasonix 的 agent 编排不复杂，但非常有取舍：主循环优先保证前缀稳定、工具调用可恢复、工具结果顺序确定、成本可观测。CLI、TUI、desktop 和 QQ 通道最终都围绕同一个本地 loop 推进。</p>
+      <p>架构文档把主循环总结为三个持久状态：immutable prefix、append-only log、volatile scratch。源码中对应 <code>ImmutablePrefix</code>、<code>AppendOnlyLog</code> 和 <code>VolatileScratch</code>，由 <code>CacheFirstLoop</code> 在每轮 turn 中组合成发送给 DeepSeek 的 messages。</p>
+    </section>
+
+    <section class="card" id="loop">
+      <h2>CacheFirstLoop：一次 turn 的主轴</h2>
+      <p><code>CacheFirstLoopOptions</code> 注入 DeepSeek client、immutable prefix、工具注册表、模型、预算、会话、hooks、确认闸门和可选 system rebuilder。构造函数会建立修复器、上下文管理器和 session 统计器。</p>
+      <pre class="diagram"><code>step(input)
+  1. budget gate and active-turn initialization
+  2. append and persist user message
+  3. build messages = prefix messages + healed append-only log
+  4. maybe fold context before the call
+  5. call DeepSeek, usually streaming
+  6. record usage and cache metrics
+  7. repair tool calls
+  8. append assistant message
+  9. dispatch tool calls or finish
+ 10. maybe fold context after usage</code></pre>
+      <p>几个细节值得注意：</p>
+      <ul>
+        <li><code>/new</code> 会清空 log 但保持会话名称；如果需要重建 system prompt，会接受一次 cache miss。</li>
+        <li><code>/cwd</code> 切换会归档旧 session、清空 log、重建 system prompt，本质上是换工作区边界。</li>
+        <li>发送前会 heal active log，并把过大的工具参数、工具结果、reasoning 字段收缩或剥离，减少不必要的后续上下文污染。</li>
+        <li>工具执行前后都经过 hooks，实际用户确认由 <code>PauseGate</code> 桥接到 TUI 或 dashboard。</li>
+      </ul>
+    </section>
+
+    <section class="card" id="stream">
+      <h2>模型流式响应：内容、reasoning、tool_calls 分流累积</h2>
+      <p><code>streamModelResponse</code> 把 DeepSeek SSE 增量拆成 content、reasoning_content 和 tool_call delta。tool_call delta 按 index 聚合，因此模型可以分片输出 JSON 参数，客户端在本地重建完整调用。</p>
+      <p>DeepSeek client 对非流式和流式路径都保存 usage，并显式解析 <code>prompt_cache_hit_tokens</code>、<code>prompt_cache_miss_tokens</code>。流式请求初始 fetch 可以重试，但一旦流开始，中途失败不会重试，避免重复计费或上下文状态错位。</p>
+      <div class="note">
+        <p>这是一种务实的可靠性边界：网络层只在请求尚未开始消费时重试；一旦响应流进入业务语义层，就把失败交给上层 turn 恢复，而不是假装可以无损续流。</p>
+      </div>
+    </section>
+
+    <section class="card" id="repair">
+      <h2>工具调用修复：把模型不稳定性挡在本地</h2>
+      <p>Reasonix 明确承认 DeepSeek 在复杂工具 schema、reasoning 中夹带工具调用、JSON 被截断、重复调用等场景下会出现不稳定输出。因此它把 repair 作为主循环的一等环节。</p>
+      <div class="summary-grid">
+        <div class="mini-card">
+          <h3>Schema flatten</h3>
+          <p>当工具 schema 超过两层或叶子数超过阈值时，Reasonix 会把参数扁平化成 dot path，降低模型输出复杂 JSON 的难度，dispatch 前再 re-nest。</p>
+        </div>
+        <div class="mini-card">
+          <h3>Reasoning scavenge</h3>
+          <p>如果 tool call 混在 reasoning_content 或普通文本里，修复器会扫描 DSML invoke blocks 和 raw JSON，限定在已知工具名集合中恢复调用。</p>
+        </div>
+        <div class="mini-card">
+          <h3>Truncation repair</h3>
+          <p>参数 JSON 不完整时，先做本地括号、字符串、尾逗号等修补；无法修复时保留原参数，让工具层返回明确解析错误。</p>
+        </div>
+        <div class="mini-card">
+          <h3>Storm breaker</h3>
+          <p>连续重复的 read-only 工具调用会被滑动窗口过滤。若所有调用都被过滤，loop 会注入一次自我纠偏 stub，而不是无限空转。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="dispatch">
+      <h2>工具调度：并行执行，顺序落盘</h2>
+      <p>工具定义上有 <code>readOnly</code>、<code>readOnlyCheck</code>、<code>parallelSafe</code>、<code>stormExempt</code> 等标记。调度器会把连续的 parallel-safe 工具调用切成 chunk，用 <code>Promise.allSettled</code> 并行执行；遇到非安全调用则作为串行 barrier。</p>
+      <p>并行结果不会按完成时间直接进入对话日志，而是按原始 tool call 顺序 append。这个设计让模型可见的工具结果顺序保持确定，避免并行带来的 nondeterministic prompt 变化。</p>
+      <div class="formula formula-block"><code>parallel execution for latency, deterministic append order for cache and reasoning stability</code></div>
+      <p>默认并发上限由 <code>REASONIX_PARALLEL_MAX</code> 控制，默认 3，硬上限 16。设置 <code>REASONIX_TOOL_DISPATCH=serial</code> 可以退回串行。</p>
+    </section>
+
+    <section class="card" id="subagent">
+      <h2>Subagent：有成本警示的隔离子循环</h2>
+      <p>Reasonix 有 <code>spawn_subagent</code> 和内置 skills wrapper，例如 explore、research、review、security_review。它们会创建独立 child <code>CacheFirstLoop</code>，继承父工具注册表的一部分，但排除 <code>spawn_subagent</code> 和 <code>submit_plan</code>，从而硬性限制递归深度。</p>
+      <p>源码和提示词都反复强调：默认不要委托。直接工具更便宜，证据也留在父上下文中。subagent 适合两个场景：并行 fan-out 调查，或超过十个文件读取且只需要结论的场景。</p>
+      <div class="warning">
+        <p>每个新 subagent 都要付一次新的 prefix cache miss 成本。Reasonix 会在多次 spawn 或 token 较高时给预算警告，这说明 subagent 在这里不是“越多越智能”，而是明确的成本换隔离。</p>
+      </div>
+    </section>
+
+    <section class="card" id="takeaways">
+      <h2>借鉴点</h2>
+      <ul>
+        <li>把 <code>prefix stability</code> 放到架构层，不要只在请求层临时优化。</li>
+        <li>并行工具调用必须把执行顺序和模型可见顺序分开，否则会破坏可复现性和 cache 命中。</li>
+        <li>修复模型输出比单纯扩大 prompt 更稳，尤其是 schema flatten、tool-call scavenging 和重复调用断路器。</li>
+        <li>subagent 需要成本契约和递归边界，否则会迅速变成上下文与账单的放大器。</li>
+      </ul>
+    </section>
+
+    <section class="card" id="sources">
+      <h2>源码位置</h2>
+      <ul>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/loop.ts#L86-L134"><code>src/loop.ts:86-134</code></a>：loop options 与核心状态字段。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/loop.ts#L616-L1038"><code>src/loop.ts:616-1038</code></a>：一次 step 的主流程、usage 记录、repair 和工具调度。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/loop/dispatch.ts#L23-L116"><code>src/loop/dispatch.ts:23-116</code></a>：parallel-safe chunk、并发上限和顺序 append。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/repair/index.ts#L1-L123"><code>src/repair/index.ts:1-123</code></a>：repair pipeline。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/tools/subagent.ts#L115-L241"><code>src/tools/subagent.ts:115-241</code></a>：child loop 构建与递归限制。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

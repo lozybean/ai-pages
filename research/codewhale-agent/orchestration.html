@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CodeWhale Agent 编排调研</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">CodeWhale Research · Orchestration</div>
+      <h1>Agent 编排与执行主循环</h1>
+      <p class="intro">CodeWhale 的运行时核心在 <code>crates/tui</code>。它把一个 turn 拆成可观测、可审批、可恢复的多阶段流水线，而不是简单地把模型输出转成 shell 命令。</p>
+      <div class="meta">
+        <span class="tag">crates/tui</span>
+        <span class="tag green">turn_loop.rs</span>
+        <span class="tag orange">subagents</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#entry">入口与边界</a>
+      <a href="#turn-loop">主循环阶段</a>
+      <a href="#streaming">Streaming 解析</a>
+      <a href="#tools">工具规划与执行</a>
+      <a href="#subagents">子 agent</a>
+      <a href="#routing">模型与推理路由</a>
+      <a href="#sources">源码入口</a>
+    </nav>
+
+    <section class="summary" id="entry">
+      <h2>入口与边界</h2>
+      <p>仓库 README 把安装模型讲得很明确: npm wrapper 负责下载 release binary，真正运行的是 Rust binary pair。<code>codewhale</code> 是 dispatcher，<code>codewhale-tui</code> 是 companion runtime。</p>
+      <p><code>docs/ARCHITECTURE.md</code> 也提醒当前架构拆分还在进行中，<code>crates/tui</code> 仍是 live runtime source of truth。因此分析编排时，应优先看 <code>crates/tui/src/core/engine</code>、<code>crates/tui/src/client</code>、<code>crates/tui/src/tools</code>，而不是只看已拆出的 crate 名称。</p>
+    </section>
+
+    <section class="card" id="turn-loop">
+      <h2>主循环阶段</h2>
+      <p><code>Engine::handle_deepseek_turn</code> 是最重要的调度点。文件头注释直接说明它负责 per-turn orchestration: request construction、streaming event handling、tool planning/execution、LSP post-edit hooks、capacity checkpoints 和 loop termination。</p>
+      <pre class="diagram"><code>handle_deepseek_turn()
+  |
+  |-- clone client, init loop guard and tool catalog
+  |-- drain mid-turn steer input
+  |-- refresh system prompt and max steps
+  |-- optional auto compaction and cycle checks
+  |-- token budget preflight and overflow recovery
+  |-- flush pending LSP diagnostics
+  |-- build active tools and strict tool mode
+  |-- resolve reasoning effort
+  |-- check prefix-cache stability
+  |-- create streaming MessageRequest
+  |-- parse stream into content, thinking, tool_uses
+  |-- if no tools: finish, wait, or continue
+  |-- if tools: plan batches, approve, execute, compact results
+  |-- run post-edit LSP hook, append ToolResult, continue</code></pre>
+      <p>这个循环不把工具执行当作一次性副作用。每个工具调用先进入计划阶段，带有 <code>interactive</code>、<code>approval_required</code>、<code>supports_parallel</code>、<code>read_only</code> 等元数据，再决定是否并行、串行、阻断、自动 hydrate deferred tool，或触发审批。</p>
+    </section>
+
+    <section class="card" id="streaming">
+      <h2>Streaming 解析</h2>
+      <p>CodeWhale 走 OpenAI-compatible Chat Completions streaming，而不是 Responses API。<code>client/chat.rs</code> 在请求里启用 <code>stream_options.include_usage=true</code>，并解析 DeepSeek 返回的 <code>reasoning_content</code>、工具调用 delta 和 usage-only chunks。</p>
+      <div class="summary-grid">
+        <div class="mini-card">
+          <h3>超时与重试</h3>
+          <p><code>streaming.rs</code> 设置 per-chunk idle timeout、wall-clock cap、最大 content bytes、最大 stream errors 和透明重试预算。只有在没有收到有效内容时才做透明重试。</p>
+        </div>
+        <div class="mini-card">
+          <h3>thinking/reasoning</h3>
+          <p>DeepSeek V4 thinking 模式对带 tool_calls 的 assistant message 要求 <code>reasoning_content</code>。CodeWhale 会在必要时插入占位 reasoning content，并记录 replay token。</p>
+        </div>
+        <div class="mini-card">
+          <h3>工具片段</h3>
+          <p>streaming state 维护 block kind、current tool indices、raw/visible text、tool input JSON buffer 和 fake wrapper scrubber，以容忍模型输出的多种 tool-call 形态。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="tools">
+      <h2>工具规划与执行</h2>
+      <p>工具系统的编排比“模型叫工具，宿主执行”多了几层保护。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>阶段</th>
+            <th>机制</th>
+            <th>意义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>注册</td>
+            <td>Plan 模式只暴露只读文件、搜索、git history、diagnostics、skill、validation、handle、runtime read-only task、todo/plan/goal。</td>
+            <td>Plan 不是靠审批阻止写入，而是在工具目录层面不暴露 shell 和 patch。</td>
+          </tr>
+          <tr>
+            <td>规划</td>
+            <td>解析 interactive、caller allow policy、MCP 只读/并行属性、tool_search hydration、loop guard。</td>
+            <td>先把“能不能执行”和“怎样执行”固定下来，减少模型输出歧义。</td>
+          </tr>
+          <tr>
+            <td>并行</td>
+            <td>并行批只运行 read-only 且 supports_parallel 的工具，结果按原始 index 写回 outcomes。</td>
+            <td>读操作加速，但模型可见的结果顺序保持稳定。</td>
+          </tr>
+          <tr>
+            <td>审批</td>
+            <td>写入、代码执行、非只读 MCP、subagent open 等触发 <code>ApprovalRequired</code>，支持 approve、deny、retry with elevated policy。</td>
+            <td>审批与沙箱 policy 联动，允许用户按单次工具调用提升权限。</td>
+          </tr>
+          <tr>
+            <td>副作用前</td>
+            <td><code>write_file</code>、<code>edit_file</code>、<code>apply_patch</code> 前做 workspace snapshot。</td>
+            <td>为局部 undo 和审计留下恢复点。</td>
+          </tr>
+          <tr>
+            <td>副作用后</td>
+            <td>大输出 spillover、working set observe、post-edit LSP diagnostics。</td>
+            <td>避免长输出污染上下文，同时把编辑后的诊断反馈回下一步。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="subagents">
+      <h2>子 agent</h2>
+      <p>CodeWhale 的子 agent 不是一次性 prompt 调用，而是 persistent background session。模型面对的主要表面是 <code>agent_open</code>、<code>agent_eval</code>、<code>agent_close</code>，旧的 <code>agent_spawn</code> 等路径仍保留兼容。</p>
+      <div class="summary-grid">
+        <div class="mini-card">
+          <h3>后台生命周期</h3>
+          <p><code>background_runtime()</code> 会为子 agent 创建独立 cancellation token。父 turn 取消不会自动杀掉已经打开的后台子 agent，显式关闭走 <code>agent_close</code>。</p>
+        </div>
+        <div class="mini-card">
+          <h3>深度与并发</h3>
+          <p>默认 spawn depth 为 3；并发上限默认 10，配置钳制到 1..=20。running agent 才计入上限。</p>
+        </div>
+        <div class="mini-card">
+          <h3>上下文模式</h3>
+          <p><code>fork_context=false</code> 时是 fresh child；<code>true</code> 时尽量保留父请求的 system 和 leading messages 字节前缀，再追加结构化状态和子任务。</p>
+        </div>
+        <div class="mini-card">
+          <h3>完成哨兵</h3>
+          <p>直接子 agent 完成后向父循环发送 <code>&lt;codewhale:subagent.done&gt;</code> sentinel。sentinel 刻意保持很瘦，完整 transcript 通过 handle 或 <code>agent_eval</code> 拉取。</p>
+        </div>
+      </div>
+      <p>子 agent role 包括 <code>general</code>、<code>explore</code>、<code>plan</code>、<code>review</code>、<code>implementer</code>、<code>verifier</code>、<code>tool_agent</code>、<code>custom</code>。默认 agent 已从早期 allowlist 模型转向继承父 registry，但审批门和角色限制仍会约束高风险工具。</p>
+    </section>
+
+    <section class="card" id="routing">
+      <h2>模型与推理路由</h2>
+      <p><code>--model auto</code> 和 <code>reasoning_effort=auto</code> 是两套相关但不同的机制。TUI 的 auto model router 会拿用户最新输入和最近上下文窗口，调用 flash router 选择 concrete model 与 reasoning effort；固定模型下的 auto thinking 则走本地启发式，不启动隐藏 router 请求。</p>
+      <p>子 agent 也有自己的路由逻辑。<code>tool_agent</code> 被强制路由到 <code>deepseek-v4-flash</code> 且 thinking off；其他子 agent 先看显式 model，再看 role/type 配置，最后继承父模型，必要时再咨询 flash router。</p>
+    </section>
+
+    <section class="card" id="sources">
+      <h2>源码入口</h2>
+      <ul>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/core/engine/turn_loop.rs#L1-L22"><code>turn_loop.rs:1-22</code></a>: per-turn orchestration 文件职责。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/core/engine/turn_loop.rs#L1161-L1908"><code>turn_loop.rs:1161-1908</code></a>: 工具规划、审批、并行/串行执行、spillover、LSP hook。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/core/engine/tool_setup.rs#L10-L90"><code>tool_setup.rs:10-90</code></a>: 模式到 sandbox policy 和工具 registry 的映射。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/tools/subagent/mod.rs#L715-L970"><code>subagent/mod.rs:715-970</code></a>: runtime、depth、cancellation、fork context。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/tools/subagent/mod.rs#L1883-L2028"><code>subagent/mod.rs:1883-2028</code></a>: <code>agent_open</code> 工具表面。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/tui/auto_router.rs#L1-L80"><code>auto_router.rs:1-80</code></a>: auto model routing 的最近上下文窗口。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

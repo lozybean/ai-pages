@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reasonix 源码证据索引</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Reasonix Research · Source Map</div>
+      <h1>源码证据索引</h1>
+      <p class="intro">集中列出本次调研引用过的关键源码位置、行号和工程含义，方便继续追踪或复核判断。</p>
+      <div class="meta">
+        <span class="tag">commit 1095f5f</span>
+        <span class="tag green">source snapshot</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#repo">仓库快照</a>
+      <a href="#loop">Loop 与编排</a>
+      <a href="#cache">Cache 与成本</a>
+      <a href="#permissions">沙箱与权限</a>
+      <a href="#remote">远程通道</a>
+      <a href="#notes">注意事项</a>
+    </nav>
+
+    <section class="summary" id="repo">
+      <h2>仓库快照</h2>
+      <ul>
+        <li>远程仓库：<a href="https://github.com/esengine/deepseek-reasonix">https://github.com/esengine/deepseek-reasonix</a></li>
+        <li>调研 commit：<a href="https://github.com/esengine/deepseek-reasonix/tree/1095f5ff52946c07449b4faa7b0cc5dca17477f7"><code>1095f5ff52946c07449b4faa7b0cc5dca17477f7</code></a></li>
+        <li>package version：<code>0.52.0</code></li>
+      </ul>
+    </section>
+
+    <section class="card" id="loop">
+      <h2>Loop 与编排</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>源码</th>
+            <th>证据</th>
+            <th>工程含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/loop.ts#L86-L134"><code>src/loop.ts:86-134</code></a></td>
+            <td><code>CacheFirstLoopOptions</code> 与核心字段。</td>
+            <td>主循环直接持有 client、prefix、tools、append-only log、scratch、stats、repair。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/loop.ts#L616-L729"><code>src/loop.ts:616-729</code></a></td>
+            <td><code>step()</code> 开始阶段。</td>
+            <td>预算、scratch、user message 持久化、工具规格、turn-start fold 都在模型调用前完成。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/loop.ts#L882-L1038"><code>src/loop.ts:882-1038</code></a></td>
+            <td>usage、repair、assistant append、tool dispatch。</td>
+            <td>工具调用不是模型返回后直接执行，而是先经过统计、修复和风暴保护。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/loop/streaming.ts#L25-L101"><code>src/loop/streaming.ts:25-101</code></a></td>
+            <td>content、reasoning、tool-call delta 聚合。</td>
+            <td>适配 DeepSeek 流式输出，同时保留 tool_call index 级增量重建。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/loop/dispatch.ts#L23-L116"><code>src/loop/dispatch.ts:23-116</code></a></td>
+            <td>parallel-safe chunk 和 serial barrier。</td>
+            <td>延迟优化和确定性落盘分离，避免并发破坏模型可见顺序。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/tools/subagent.ts#L454-L572"><code>src/tools/subagent.ts:454-572</code></a></td>
+            <td><code>spawn_subagent</code> 工具描述。</td>
+            <td>subagent 被明确限制为昂贵的隔离调查工具，默认不鼓励使用。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="cache">
+      <h2>Cache 与成本</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>源码</th>
+            <th>证据</th>
+            <th>工程含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/memory/runtime.ts#L10-L88"><code>src/memory/runtime.ts:10-88</code></a></td>
+            <td>ImmutablePrefix 与 fingerprint。</td>
+            <td>system、tool specs、few-shot 被当作 cache-sensitive prefix。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/memory/runtime.ts#L91-L132"><code>src/memory/runtime.ts:91-132</code></a></td>
+            <td>AppendOnlyLog 与 VolatileScratch。</td>
+            <td>普通 turn 只追加；scratch 不污染下一轮稳定上下文。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/context-manager.ts#L27-L43"><code>src/context-manager.ts:27-43</code></a></td>
+            <td>上下文折叠阈值。</td>
+            <td>在接近 1M context 时自动折叠，而不是等请求失败。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/context-manager.ts#L274-L335"><code>src/context-manager.ts:274-335</code></a></td>
+            <td>fold summary 调用。</td>
+            <td>summary 也复用 live prefix，尽量保持缓存友好。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/telemetry/stats.ts#L4-L85"><code>src/telemetry/stats.ts:4-85</code></a></td>
+            <td>DeepSeek pricing 和 cache savings。</td>
+            <td>cache hit/miss 被纳入成本公式，而不是只显示 token 总量。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/benchmarks/real-world-cache/README.md#L8-L66"><code>benchmarks/real-world-cache/README.md:8-66</code></a></td>
+            <td>99.82% real-world input cache hit 案例。</td>
+            <td>项目用真实案例证明 cache-first 架构的可观测效果。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="permissions">
+      <h2>沙箱与权限</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>源码</th>
+            <th>证据</th>
+            <th>工程含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/tools/filesystem.ts#L151-L218"><code>src/tools/filesystem.ts:151-218</code></a></td>
+            <td>外部路径确认和 safePath。</td>
+            <td>文件系统沙箱是应用层路径约束，可以被用户确认扩展。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/tools/shell.ts#L87-L205"><code>src/tools/shell.ts:87-205</code></a></td>
+            <td>run_command/run_background confirmation。</td>
+            <td>非 allowlisted 命令进入 PauseGate，可持久允许。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/tools/shell/exec.ts#L45-L91"><code>src/tools/shell/exec.ts:45-91</code></a></td>
+            <td><code>spawn</code> with <code>shell:false</code>。</td>
+            <td>降低 shell 注入面，但不是 OS 级隔离。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/tools/shell-chain.ts#L376-L403"><code>src/tools/shell-chain.ts:376-403</code></a></td>
+            <td>redirect target realpath checks。</td>
+            <td>命令链重定向目标也要留在 sandbox 内。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/core/pause-gate.ts#L34-L42"><code>src/core/pause-gate.ts:34-42</code></a></td>
+            <td>pause kinds。</td>
+            <td>shell、path、plan、choice、checkpoint 等交互都被统一为 gate。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="remote">
+      <h2>远程通道</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>源码</th>
+            <th>证据</th>
+            <th>工程含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/server/index.ts#L47-L88"><code>src/server/index.ts:47-88</code></a></td>
+            <td>dashboard auth。</td>
+            <td>读请求可 query token，mutation 需 header token。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/server/index.ts#L199-L243"><code>src/server/index.ts:199-243</code></a></td>
+            <td>server bind 与非 loopback 警告。</td>
+            <td>默认本地，绑定非 loopback 是显式暴露控制面。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/server/api/events.ts#L19-L70"><code>src/server/api/events.ts:19-70</code></a></td>
+            <td>SSE events。</td>
+            <td>dashboard 可实时拿 busy/modal 状态。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/qq/channel.ts#L134-L173"><code>src/qq/channel.ts:134-173</code></a></td>
+            <td>QQ message to local session。</td>
+            <td>QQ 是 attach 到本地 loop 的远程输入通道。</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/acp/server.ts#L1-L143"><code>src/acp/server.ts:1-143</code></a></td>
+            <td>NDJSON JSON-RPC。</td>
+            <td>ACP 是本地 host 集成协议，不是网络 tunnel。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="notes">
+      <h2>注意事项</h2>
+      <ul>
+        <li><code>docs/ARCHITECTURE.md</code> 的 non-goals 中提到 RAG/vector retrieval 不是目标，但当前代码已有 <code>src/index/semantic/*</code> 和 semantic search 工具。这里应理解为文档与实现演进存在漂移。</li>
+        <li><code>src/tools/subagent.ts</code> 文件头注释写了 non-streaming child loop，但后续构造 child <code>CacheFirstLoop</code> 时配置为 <code>stream: true</code>。这也是小范围注释漂移。</li>
+        <li>SECURITY 文档把 run_command 称为 shell sandbox，但从源码看它是命令解析、确认和路径限制，不是 kernel sandbox。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

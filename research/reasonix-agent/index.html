@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DeepSeek Reasonix Coding Agent 调研总览</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Research · DeepSeek-native Coding Agent</div>
+      <h1>Reasonix 技术调研总览</h1>
+      <p class="intro">围绕 <a href="https://github.com/esengine/deepseek-reasonix">esengine/deepseek-reasonix</a> 的源码快照，梳理 agent 编排、prefix cache 优化、应用层沙箱与远程控制通道。</p>
+      <div class="meta">
+        <span class="tag">Reasonix 0.52.0</span>
+        <span class="tag green">commit 1095f5f</span>
+        <span class="tag orange">未挂首页</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#scope">调研口径</a>
+      <a href="#conclusion">核心结论</a>
+      <a href="#docs">文档集合</a>
+      <a href="#architecture">技术全景</a>
+      <a href="#risks">工程判断</a>
+      <a href="#sources">资料来源</a>
+    </nav>
+
+    <section class="summary" id="scope">
+      <h2>调研口径</h2>
+      <p>本次调研对象是用户指定的 Reasonix 仓库，而不是其他 DeepSeek agent 项目。分析基于公开仓库源码快照 <code>1095f5ff52946c07449b4faa7b0cc5dca17477f7</code>。</p>
+      <p>Reasonix 的自我定位是 “DeepSeek-native coding agent”。它不是把通用 OpenAI SDK 包一层 UI，而是围绕 DeepSeek 的 prefix cache、tool-call 可靠性和低成本长上下文循环做了专门设计。</p>
+    </section>
+
+    <section class="card" id="conclusion">
+      <h2>核心结论</h2>
+      <div class="summary-grid">
+        <div class="mini-card">
+          <h3>编排核心</h3>
+          <p>主循环由 <code>CacheFirstLoop</code> 驱动，状态拆为 immutable prefix、append-only log、volatile scratch。一次 step 中串起预算检查、上下文折叠、模型流式响应、tool-call 修复、工具调度和持久化。</p>
+        </div>
+        <div class="mini-card">
+          <h3>Prefix Cache</h3>
+          <p>优化重点不是“少发上下文”，而是让昂贵、稳定的前缀字节在每轮请求中保持完全一致。工具规格、系统提示和 few-shot 固定在 prefix，动态内容只追加或折叠。</p>
+        </div>
+        <div class="mini-card">
+          <h3>沙箱边界</h3>
+          <p>Reasonix 没有实现 kernel/OS 级沙箱。它的安全模型是应用层 rootDir 限制、路径审批、shell allowlist、敏感路径降级、edit gate、plan mode 和 PauseGate。</p>
+        </div>
+        <div class="mini-card">
+          <h3>远程通道</h3>
+          <p>仓库没有内置 cloudflared/ngrok 类反向隧道。远程能力主要来自本地 dashboard HTTP server、QQ Bot WebSocket channel，以及面向 host 集成的 ACP stdio/JSON-RPC。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="docs">
+      <h2>文档集合</h2>
+      <div class="grid">
+        <article class="card">
+          <div class="card-head">
+            <span class="tag">01</span>
+            <h3>Agent 编排</h3>
+          </div>
+          <p class="desc">从 CLI/TUI 入口、CacheFirstLoop、流式响应、修复管线、并行工具调度到 subagent 策略，解释一次 Reasonix turn 如何被推进。</p>
+          <div class="actions">
+            <a class="button primary" href="orchestration.html">打开文档</a>
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head">
+            <span class="tag green">02</span>
+            <h3>Prefix Cache 优化</h3>
+          </div>
+          <p class="desc">拆解 immutable prefix、append-only log、volatile scratch、上下文折叠、工具输出瘦身、read_file outline 和成本统计。</p>
+          <div class="actions">
+            <a class="button primary" href="prefix-cache.html">打开文档</a>
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head">
+            <span class="tag orange">03</span>
+            <h3>沙箱与权限</h3>
+          </div>
+          <p class="desc">分析 root sandbox、外部路径审批、shell 解析与 allowlist、敏感路径、edit gate、plan/yolo 模式和真实风险边界。</p>
+          <div class="actions">
+            <a class="button primary" href="sandbox-permissions.html">打开文档</a>
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head">
+            <span class="tag purple">04</span>
+            <h3>Dashboard、QQ 与远程通道</h3>
+          </div>
+          <p class="desc">说明 dashboard token/SSE/modal 机制、QQ 远程消息通道、ACP 集成协议，以及“tunnel”应如何理解和部署。</p>
+          <div class="actions">
+            <a class="button primary" href="remote-dashboard-qq.html">打开文档</a>
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head">
+            <span class="tag red">05</span>
+            <h3>源码证据索引</h3>
+          </div>
+          <p class="desc">把本文档引用到的关键文件、函数、行号和工程含义集中列出，便于后续继续追源码或写评审意见。</p>
+          <div class="actions">
+            <a class="button primary" href="source-map.html">打开文档</a>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="card" id="architecture">
+      <h2>技术全景</h2>
+      <pre class="diagram"><code>CLI / TUI / Desktop / QQ
+        |
+        v
+CacheFirstLoop.step()
+  |-- stable prefix: system + tool specs + few shots
+  |-- append-only conversation log
+  |-- volatile scratch for reasoning and turn-local state
+        |
+        v
+DeepSeek chat/completions stream
+        |
+        v
+Tool-call repair: flatten schema, reasoning scavenging, truncation repair, storm breaker
+        |
+        v
+Tool dispatch: parallel-safe chunks + serial barriers + deterministic result append
+        |
+        v
+Session persistence, cache/cost telemetry, context fold when thresholds are crossed</code></pre>
+      <p>Reasonix 的设计重心很清楚：把稳定、昂贵、会影响 cache key 的内容固定住，把不可避免的动态内容推到 append-only log 或 scratch 中，把工具调用失败的概率在本地修复掉，并用上下文折叠维持长会话。</p>
+    </section>
+
+    <section class="card" id="risks">
+      <h2>工程判断</h2>
+      <div class="compare">
+        <div class="good">
+          <h3>值得借鉴</h3>
+          <p>Reasonix 把 DeepSeek prefix cache 当作架构约束，而不是价格优化小技巧。它对前缀稳定性、工具 schema 扁平化、流式 tool-call 拼接、结果顺序确定性和上下文折叠都有直接代码支撑。</p>
+        </div>
+        <div class="warning">
+          <h3>需要保持清醒</h3>
+          <p>“sandbox”主要是应用层约束。只要用户批准了命令，进程仍以当前用户身份运行；dashboard 若暴露到非 loopback，也只是 token 保护，没有内置 TLS 或反向隧道隔离。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="sources">
+      <h2>资料来源</h2>
+      <ul>
+        <li><a href="https://github.com/esengine/deepseek-reasonix">GitHub: esengine/deepseek-reasonix</a></li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/tree/1095f5ff52946c07449b4faa7b0cc5dca17477f7">源码快照: 1095f5ff52946c07449b4faa7b0cc5dca17477f7</a></li>
+        <li><a href="https://esengine.github.io/DeepSeek-Reasonix/">Reasonix 项目站点</a></li>
+        <li><a href="https://www.npmjs.com/package/reasonix">npm: reasonix</a></li>
+      </ul>
+      <p>每个专题页底部都包含本页引用的关键源码位置。更完整的文件索引见 <a href="source-map.html">源码证据索引</a>。</p>
+    </section>
+  </main>
+</body>
+</html>

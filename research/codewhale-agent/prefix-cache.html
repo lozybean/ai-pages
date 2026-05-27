@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CodeWhale Prefix Cache 与上下文经济学</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">CodeWhale Research · Prefix Cache</div>
+      <h1>Prefix Cache 与上下文经济学</h1>
+      <p class="intro">CodeWhale 的 DeepSeek V4 适配重点，不是简单缩短 prompt，而是让稳定前缀可复用、动态尾部可追加、压缩尽量晚发生，并把 cache hit/miss 直接纳入成本视图。</p>
+      <div class="meta">
+        <span class="tag">DeepSeek V4 1M</span>
+        <span class="tag green">PrefixStabilityManager</span>
+        <span class="tag orange">late compaction</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#model">基本模型</a>
+      <a href="#stability">稳定性检测</a>
+      <a href="#subagents">子 agent 复用</a>
+      <a href="#compaction">压缩与循环</a>
+      <a href="#streaming">thinking 与工具输出</a>
+      <a href="#cost">成本统计</a>
+      <a href="#sources">源码入口</a>
+    </nav>
+
+    <section class="summary" id="model">
+      <h2>基本模型</h2>
+      <p>README 明确把 DeepSeek V4 prefix caching 作为长 Constitution prompt 可行的前提。源码中的 <code>prefix_cache.rs</code> 把上下文拆成三段: immutable prefix、append-only history、latest user turn。核心目标是减少对前缀字节的改写。</p>
+      <pre class="diagram"><code>stable prefix
+  system prompt + tool names/spec shape + constitution-like rules
+        |
+append-only history
+  prior messages, tool calls, tool results
+        |
+latest tail
+  current user request, transient steer input, new tool results</code></pre>
+      <p>这个设计和 V4 的 1M context 搭配后，倾向于“先保留长上下文，晚压缩”。对 V4 来说，过早 replacement compaction 会破坏已经热起来的 KV prefix，省 token 的同时可能丢掉 cache 折扣和上下文连续性。</p>
+    </section>
+
+    <section class="card" id="stability">
+      <h2>稳定性检测</h2>
+      <p><code>PrefixStabilityManager</code> 在每轮请求前生成 fingerprint。如果 system prompt hash 或 active tool names 改变，就发出 <code>PrefixCacheChange</code> 事件并重新 pin baseline。</p>
+      <div class="summary-grid">
+        <div class="mini-card">
+          <h3>检测内容</h3>
+          <p>fingerprint 包含 system prompt hash、排序后的 tool names、tool count 和 pinned time。</p>
+        </div>
+        <div class="mini-card">
+          <h3>接入位置</h3>
+          <p><code>turn_loop.rs</code> 在构造 <code>MessageRequest</code> 前执行稳定性检查，然后再发送 streaming request。</p>
+        </div>
+        <div class="mini-card">
+          <h3>输出价值</h3>
+          <p>它把 prefix cache 变成可观测信号，而不是只等 provider usage 返回 hit/miss 后才发现问题。</p>
+        </div>
+        <div class="mini-card">
+          <h3>局限</h3>
+          <p>当前 fingerprint 只看 tool names，不 hash 完整工具 schema。若工具描述或参数 schema 改变但名字不变，检测可能不会报 drift。</p>
+        </div>
+      </div>
+      <p>这个局限很重要。CodeWhale 在工程上已经把 tool catalog 稳定性作为 cache 维度，但检测精度仍偏轻量，适合告警而不是严格证明前缀字节完全一致。</p>
+    </section>
+
+    <section class="card" id="subagents">
+      <h2>子 agent 复用</h2>
+      <p>CodeWhale 的 subagent 有两个特别贴近 prefix cache 的设计。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>机制</th>
+            <th>实现</th>
+            <th>缓存意义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>fork_context</code></td>
+            <td>子 agent 复制父 runtime 的 system prompt 和 leading messages，再追加 <code>&lt;codewhale:fork_state&gt;</code>、<code>&lt;codewhale:subagent_context&gt;</code> 与子任务。</td>
+            <td>对同一父上下文分叉多个视角时，尽量保持父请求前缀字节相同。</td>
+          </tr>
+          <tr>
+            <td><code>resident_file</code></td>
+            <td>spawn 时读取文件内容，作为固定前缀塞进 child prompt，并用全局 lease 防止两个 agent 同时持有同一文件。</td>
+            <td>适合“围绕同一大文件连续追问”的场景，让文件内容在 child session 里更稳定。</td>
+          </tr>
+          <tr>
+            <td>completion sentinel</td>
+            <td>子 agent 完成后只把短 summary 和轻量 <code>&lt;codewhale:subagent.done&gt;</code> 注入父循环。</td>
+            <td>避免把完整 child transcript 塞进父上下文尾部，降低 cache-miss tail 膨胀。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="compaction">
+      <h2>压缩与循环</h2>
+      <p>CodeWhale 的默认策略偏保守: V4 replacement compaction 不因 reasoning effort 降低阈值；自动 replacement compaction 在配置层是 opt-in；Flash seam manager 和 capacity controller 也默认不介入。配置文档明确说 prompt cache hit/miss 只用于显示和成本估算，不能驱动 compaction、seam 或 cycle trigger。</p>
+      <div class="summary-grid">
+        <div class="mini-card">
+          <h3>上下文窗口</h3>
+          <p><code>models.rs</code> 把 V4 Pro/Flash 视为 1M context，默认压缩阈值约为窗口的 80%。</p>
+        </div>
+        <div class="mini-card">
+          <h3>500K floor</h3>
+          <p><code>compaction.rs</code> 给自动压缩设置 500K 最小门槛，因为压缩会重写稳定前缀并破坏 KV cache。</p>
+        </div>
+        <div class="mini-card">
+          <h3>cycle restart</h3>
+          <p><code>cycle_manager.rs</code> 针对 256K+ 之后的检索退化，提出 checkpoint-restart: 归档旧 cycle，带结构化工作状态开启新 cycle。</p>
+        </div>
+        <div class="mini-card">
+          <h3>capacity controller</h3>
+          <p>容量控制器默认关闭。文档写明主动干预可能改写 live prompt，破坏 prefix-cache affinity。</p>
+        </div>
+      </div>
+      <p>这套策略背后的判断是: V4 长上下文里的 token 成本不只看输入长度，还要看 cache 命中率和上下文质量。频繁压缩会让请求更短，但可能让稳定前缀反复失效。</p>
+    </section>
+
+    <section class="card" id="streaming">
+      <h2>Thinking 与工具输出</h2>
+      <p>DeepSeek V4 thinking 模式下，工具调用的 assistant message 可能需要 <code>reasoning_content</code>。CodeWhale 在 <code>client/chat.rs</code> 里做 provider-aware sanitizer: 当历史 assistant 有 tool_calls 但缺 reasoning content 时，插入占位内容，并把 replay token 记录进 usage。</p>
+      <p>工具输出方面，<code>truncate.rs</code> 对超过阈值的大输出做 spillover: 完整内容写入 <code>~/.codewhale</code> 优先，回退到 <code>~/.deepseek</code>，上下文里只保留 head 和 artifact reference。这比简单截断更适合 agent 继续工作，因为模型知道完整输出在哪里，而不是误以为输出本身完整。</p>
+    </section>
+
+    <section class="card" id="cost">
+      <h2>成本统计</h2>
+      <p>CodeWhale 解析 provider usage 时显式区分 input/output、cached tokens、prompt cache hit/miss、reasoning tokens 和 reasoning replay tokens。<code>pricing.rs</code> 再按 DeepSeek V4 Pro/Flash 的 hit/miss 价格计算估算成本与 cache savings。</p>
+      <div class="quote">
+        <p>工程含义: cache telemetry 是反馈面板和成本仪表，不是自动删上下文的触发器。</p>
+      </div>
+      <p>这也是 CodeWhale 和很多 coding agent 的差异点: 它把 prefix cache 作为“编排稳定性”问题处理，而不是只在 UI 里显示一行 saved tokens。</p>
+    </section>
+
+    <section class="card" id="sources">
+      <h2>源码入口</h2>
+      <ul>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/prefix_cache.rs#L1-L30"><code>prefix_cache.rs:1-30</code></a>: 三段式 prefix cache 模型。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/prefix_cache.rs#L37-L76"><code>prefix_cache.rs:37-76</code></a>: fingerprint 字段与 tool names hash。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/prefix_cache.rs#L198-L242"><code>prefix_cache.rs:198-242</code></a>: drift 检测与 baseline repin。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/core/engine/turn_loop.rs#L241-L282"><code>turn_loop.rs:241-282</code></a>: 每轮请求前的 prefix-cache 稳定性检查。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/tools/subagent/mod.rs#L3435-L3479"><code>subagent/mod.rs:3435-3479</code></a>: forked child message 构造。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/tools/subagent/mod.rs#L2342-L2374"><code>subagent/mod.rs:2342-2374</code></a>: resident_file 前缀注入。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/compaction.rs#L20-L105"><code>compaction.rs:20-105</code></a>: 晚压缩和 500K floor。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/cycle_manager.rs#L1-L41"><code>cycle_manager.rs:1-41</code></a>: checkpoint-restart cycle 设计。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/docs/CONFIGURATION.md#L407-L425"><code>CONFIGURATION.md:407-425</code></a>: token quantities 和 cache hit/miss 的使用边界。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

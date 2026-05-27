@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CodeWhale Runtime API 与远程通道调研</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">CodeWhale Research · Runtime API</div>
+      <h1>Runtime API、SSE 与远程控制路径</h1>
+      <p class="intro">CodeWhale 的远程能力不是内置公网 tunnel，而是 local-first runtime API 加受控桥接: HTTP/SSE 留在本机或 VPS localhost，手机控制通过 Feishu/Lark 长连接 bridge 转发。</p>
+      <div class="meta">
+        <span class="tag">127.0.0.1:7878</span>
+        <span class="tag green">HTTP/SSE</span>
+        <span class="tag orange">Feishu/Lark bridge</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#runtime-api">Runtime API</a>
+      <a href="#events">SSE 与线程</a>
+      <a href="#app-server">App Server</a>
+      <a href="#acp-mcp">ACP 与 MCP</a>
+      <a href="#remote-first">Tencent 远程路径</a>
+      <a href="#tunnel">Tunnel 判断</a>
+      <a href="#sources">源码入口</a>
+    </nav>
+
+    <section class="summary" id="runtime-api">
+      <h2>Runtime API</h2>
+      <p><code>codewhale serve --http</code> 的核心实现位于 <code>crates/tui/src/runtime_api.rs</code>。默认 host 是 <code>127.0.0.1</code>，port 是 <code>7878</code>，workers 默认 2。它启动 task manager、runtime thread manager、automation manager 和 scheduler，然后构造 Axum router。</p>
+      <p>当前源码的认证默认比部分文档更严格: 如果 CLI token 和 <code>DEEPSEEK_RUNTIME_TOKEN</code> 都没给，且没有显式 <code>--insecure-no-auth</code>，会生成一个本进程临时 bearer token。<code>/health</code> 和 <code>/v1/runtime/info</code> 不在受保护子路由里，其余 <code>/v1/*</code> 路由会经过 token middleware。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>路由</th>
+            <th>能力</th>
+            <th>认证</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>/health</code></td>
+            <td>返回 <code>deepseek-runtime-api</code> local health。</td>
+            <td>不受 token middleware 保护。</td>
+          </tr>
+          <tr>
+            <td><code>/v1/runtime/info</code></td>
+            <td>返回 bind host、port、auth_required、version。</td>
+            <td>不受 token middleware 保护。</td>
+          </tr>
+          <tr>
+            <td><code>/v1/threads</code></td>
+            <td>创建、列出、查询、更新、resume、fork runtime threads。</td>
+            <td>默认需要 bearer、<code>x-deepseek-runtime-token</code> 或 query token。</td>
+          </tr>
+          <tr>
+            <td><code>/v1/threads/{id}/turns</code></td>
+            <td>启动 turn、steer、interrupt、compact。</td>
+            <td>默认需要 token。</td>
+          </tr>
+          <tr>
+            <td><code>/v1/approvals/{approval_id}</code></td>
+            <td>外部批准或拒绝 pending approval。</td>
+            <td>默认需要 token。</td>
+          </tr>
+          <tr>
+            <td><code>/v1/tasks</code> / <code>/v1/automations</code></td>
+            <td>后台任务、automation、runs、pause/resume。</td>
+            <td>默认需要 token。</td>
+          </tr>
+          <tr>
+            <td><code>/v1/apps/mcp/*</code></td>
+            <td>列出 MCP servers 和 tools。</td>
+            <td>默认需要 token。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="events">
+      <h2>SSE 与线程</h2>
+      <p>Runtime API 提供两种 SSE 场景。<code>/v1/threads/{id}/events</code> 先吐 backlog，再订阅 live event，并用 <code>since_seq</code> 做游标过滤。<code>/v1/stream</code> 是兼容式一次性 stream: 先创建 archived thread，再启动 turn，并把内部 runtime events 映射为兼容事件，直到 <code>turn.completed</code> 后发送 <code>done</code>。</p>
+      <pre class="diagram"><code>POST /v1/stream
+  |
+  |-- validate prompt
+  |-- choose model, workspace, mode, allow_shell
+  |-- create archived runtime thread
+  |-- start turn
+  |-- replay backlog for that turn
+  |-- subscribe live events
+  |-- map agent/tool/approval/turn events to SSE
+  |-- emit done</code></pre>
+      <p>这个设计适合本地 UI、桌面壳、手机 bridge 或自动化系统订阅状态，不要求它们直接嵌入 TUI。</p>
+    </section>
+
+    <section class="card" id="app-server">
+      <h2>App Server</h2>
+      <p>仓库还有 <code>crates/app-server</code>，这是另一个更偏 app protocol 的 HTTP/stdio server。它暴露 <code>/thread</code>、<code>/app</code>、<code>/prompt</code>、<code>/tool</code>、<code>/jobs</code>、<code>/mcp/startup</code>。HTTP 路由默认生成 <code>cwapp_</code> bearer token，除非显式 <code>--insecure-no-auth</code>，且源码会拒绝 unauthenticated non-loopback bind。</p>
+      <p>可以把 <code>runtime_api.rs</code> 理解为 TUI runtime 的本地自动化 API，把 <code>app-server</code> 理解为面向独立 app/supervisor 的协议层试验。两者都强调 token 和 loopback，而不是“开一个公网面板”。</p>
+    </section>
+
+    <section class="card" id="acp-mcp">
+      <h2>ACP 与 MCP</h2>
+      <p><code>docs/RUNTIME_API.md</code> 把 ACP stdio 描述为保守基线: initialize、session new、prompt、cancel。它有意不通过 ACP 暴露 shell、file-write、checkpoint 或 session loading。完整本地控制走 HTTP API，工具服务集成走 MCP。</p>
+      <p>MCP 在 runtime API 里有 introspection 路由，主 engine 在执行工具前按需确保 MCP pool。MCP 工具也参与只读/审批/并行判断: 只读工具可自动执行，非只读 MCP 需要审批。</p>
+    </section>
+
+    <section class="card" id="remote-first">
+      <h2>Tencent 远程路径</h2>
+      <p>CodeWhale 的远程 runbook 很明确: Tencent Lighthouse HK 是 always-on host，<code>codewhale-runtime.service</code> 把 runtime API 绑定在 <code>127.0.0.1:7878</code>，<code>codewhale-feishu-bridge.service</code> 通过 Feishu/Lark 长连接接收手机消息，再转发到本机 runtime。</p>
+      <pre class="diagram"><code>Feishu/Lark mobile app
+  -> long-connection bot
+  -> codewhale-feishu-bridge systemd service
+  -> http://127.0.0.1:7878 codewhale serve --http
+  -> /opt/whalebro workspace</code></pre>
+      <p>CNB mirror 和 deploy templates 用于让 Lighthouse 部署可重复。EdgeOne 被定义为可选 public edge，只应该 front 文档、状态页、未来 webhook 或 demo app，不应该代理 <code>/v1/*</code> runtime endpoints。</p>
+    </section>
+
+    <section class="card" id="tunnel">
+      <h2>Tunnel 判断</h2>
+      <div class="warning">
+        <h3>不要把 runtime API 当作公网 tunnel 服务</h3>
+        <p>源码和 runbook 都不建议把 <code>http://127.0.0.1:7878</code> 或 <code>/v1/*</code> 暴露到 EdgeOne、Caddy/Nginx 或公网域名。远程控制靠 bridge 和 allowlist，而不是把 token API 开到互联网。</p>
+      </div>
+      <p>如果要和 cloudflared/ngrok 这类“tunnel”概念对齐，CodeWhale 当前更接近“长连接 bot bridge”: 控制通道由 Feishu/Lark 到桥接服务发起，外部用户不直接连 runtime API。这比公网 tunnel 更符合它 local-first 和 token custody 的安全模型。</p>
+    </section>
+
+    <section class="card" id="sources">
+      <h2>源码入口</h2>
+      <ul>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/runtime_api.rs#L65-L94"><code>runtime_api.rs:65-94</code></a>: Runtime API 默认 host、port、workers 和 auth option。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/runtime_api.rs#L102-L124"><code>runtime_api.rs:102-124</code></a>: 无 token 时默认生成 runtime token。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/runtime_api.rs#L360-L536"><code>runtime_api.rs:360-536</code></a>: server startup 和 <code>/v1/*</code> routes。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/runtime_api.rs#L538-L582"><code>runtime_api.rs:538-582</code></a>: bearer/header/query token middleware。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/tui/src/runtime_api.rs#L1305-L1469"><code>runtime_api.rs:1305-1469</code></a>: SSE thread events 和 compat stream。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/app-server/src/lib.rs#L118-L146"><code>app-server/lib.rs:118-146</code></a>: app-server HTTP router。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/crates/app-server/src/lib.rs#L336-L363"><code>app-server/lib.rs:336-363</code></a>: app-server token 默认生成与 non-loopback 约束。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/docs/TENCENT_CLOUD_REMOTE_FIRST.md#L11-L40"><code>TENCENT_CLOUD_REMOTE_FIRST.md:11-40</code></a>: Tencent 远程默认栈。</li>
+        <li><a href="https://github.com/Hmbown/CodeWhale/blob/54151a4bc942af69f55298cae986858cd02100d1/docs/TENCENT_LIGHTHOUSE_HK.md#L10-L29"><code>TENCENT_LIGHTHOUSE_HK.md:10-29</code></a>: Lighthouse phone-control 架构。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reasonix Prefix Cache 优化</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Reasonix Research · Prefix Cache</div>
+      <h1>Prefix Cache 优化机制</h1>
+      <p class="intro">Reasonix 的成本优化不是只靠便宜模型，而是把 DeepSeek 的自动 prefix cache 当作协议约束来维护：稳定前缀固定，动态内容追加，临时 scratch 不污染下一轮。</p>
+      <div class="meta">
+        <span class="tag">ImmutablePrefix</span>
+        <span class="tag green">AppendOnlyLog</span>
+        <span class="tag orange">VolatileScratch</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#why">为什么有效</a>
+      <a href="#state">三段式状态</a>
+      <a href="#fold">上下文折叠</a>
+      <a href="#shrink">输出瘦身</a>
+      <a href="#metrics">成本统计</a>
+      <a href="#bench">实测案例</a>
+      <a href="#recommendations">可复用建议</a>
+      <a href="#sources">源码位置</a>
+    </nav>
+
+    <section class="summary" id="why">
+      <h2>为什么有效</h2>
+      <p>DeepSeek 的 prefix cache 依赖请求前缀字节保持一致。Reasonix 的关键判断是：工具规格、系统提示、few-shot 和长会话历史一旦被重排、重序列化或塞入不稳定 scratch，就会把 cache key 打碎。</p>
+      <p>因此 Reasonix 把“稳定字节”变成工程不变量：prefix 在会话开始时固定；后续对话只 append；reasoning 与临时状态放到 volatile scratch；到达上下文阈值时通过 summary folding 替换旧日志，而不是改写 prefix 本身。</p>
+    </section>
+
+    <section class="card" id="state">
+      <h2>三段式状态</h2>
+      <div class="summary-grid">
+        <div class="mini-card">
+          <h3>ImmutablePrefix</h3>
+          <p>包含 system prompt、tool specs 和 few-shot。源码注释明确说工具 add/remove/replace 会 invalid fingerprint，并承认工具变化会导致一次 cache miss。</p>
+        </div>
+        <div class="mini-card">
+          <h3>AppendOnlyLog</h3>
+          <p>对话历史只暴露 append/extend。压缩和恢复用 <code>compactInPlace</code> 走显式路径，避免常规 turn 中对历史做原地重排。</p>
+        </div>
+        <div class="mini-card">
+          <h3>VolatileScratch</h3>
+          <p>存放 reasoning 和 turn-local 状态。它能让模型思考内容不进入下一轮稳定前缀，降低 cache 污染和 token 膨胀。</p>
+        </div>
+        <div class="mini-card">
+          <h3>Fingerprint</h3>
+          <p>prefix fingerprint 会 hash system、完整 tool specs 和 few-shot。这比只 hash 工具名更严格，也更符合 prefix cache 的字节级敏感性。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="fold">
+      <h2>上下文折叠：用 summary 换上下文空间</h2>
+      <p><code>ContextManager</code> 在 prompt usage 接近上限时触发折叠。默认阈值包括 fold、aggressive fold、force summary 和 turn-start fold。折叠时保留尾部最近消息，把旧消息总结为 synthetic summary，再替换 log。</p>
+      <p>重要的是，fold summary 的模型调用复用当前 live prefix：system、tools、few-shot 仍是同一组稳定字节。这样 summary 过程本身也尽量共享 cache，而不是另起一套 cache-hostile 请求。</p>
+      <div class="formula formula-block"><code>prefix messages + healed head messages + summarization instruction -> synthetic summary + recent tail</code></div>
+      <p>折叠提示还会保留 pinned skills、用户约束和未完成状态，避免压缩后丢掉 agent 工作契约。</p>
+    </section>
+
+    <section class="card" id="shrink">
+      <h2>输出瘦身：减少会话日志中的大块漂移</h2>
+      <p>Reasonix 在多个位置主动瘦身，目标是减少下一轮 prompt 中的低价值大块文本：</p>
+      <ul>
+        <li><code>shrinkOversizedToolRole</code> 和 <code>shrinkToolRoleToTokenCap</code> 会压缩工具结果，尤其是长输出。</li>
+        <li><code>shrinkAssistantToolArgs</code> 会压缩 assistant 中过大的 tool-call 参数，保留 key、路径和短值。</li>
+        <li><code>read_file</code> 对大文件默认返回 outline、head 和符号地图，而不是一次性塞入完整文件。</li>
+        <li>依赖目录默认跳过，避免 node_modules、构建产物等把上下文拖入低价值区域。</li>
+      </ul>
+      <div class="note">
+        <p>这里的思路不是简单截断，而是把“模型下一步需要什么”作为返回结构设计目标：小文件给全文，大文件给结构和下一步可执行的定位建议。</p>
+      </div>
+    </section>
+
+    <section class="card" id="metrics">
+      <h2>成本统计：cache 命中是第一等指标</h2>
+      <p>DeepSeek client 会把 API 返回的 cache hit/miss token 写入 <code>Usage</code>，统计层再计算单 turn 和累计 cache hit ratio、成本、输入成本、输出成本、节省估算。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>模型</th>
+            <th>Cache hit 输入价</th>
+            <th>Cache miss 输入价</th>
+            <th>输出价</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>deepseek-v4-flash</code></td>
+            <td>$0.0028 / 1M</td>
+            <td>$0.14 / 1M</td>
+            <td>$0.28 / 1M</td>
+          </tr>
+          <tr>
+            <td><code>deepseek-v4-pro</code></td>
+            <td>$0.003625 / 1M</td>
+            <td>$0.435 / 1M</td>
+            <td>$0.87 / 1M</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>这组价格让 hit/miss 不是小优化：对 flash 来说，cache miss 输入价约是 cache hit 输入价的 50 倍。</p>
+    </section>
+
+    <section class="card" id="bench">
+      <h2>实测案例：99.82% input cache hit</h2>
+      <p>仓库内的 real-world cache benchmark 记录了一个用户在 2026-05-01 的 DeepSeek dashboard 截图数据：cache hit input 为 435,033,856 tokens，cache miss input 为 767,616 tokens，input cache hit ratio 为 99.82%。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>项目</th>
+            <th>Reasonix 案例</th>
+            <th>同工作量 0% cache</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>flash 日成本</td>
+            <td>$1.38</td>
+            <td>$61.06</td>
+          </tr>
+          <tr>
+            <td>节省</td>
+            <td colspan="2">约 $59.68，约 97.7%</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>这个 benchmark 是项目方提供的匿名真实案例，不应泛化成所有用户都能达到 99.82%。但它证明了 Reasonix 的架构目标是可被观测到的：命中率来自客户端保持 prefix 稳定，而不只是 DeepSeek 服务端“自动支持 cache”。</p>
+    </section>
+
+    <section class="card" id="recommendations">
+      <h2>可复用建议</h2>
+      <ul>
+        <li>把 system prompt、工具 spec、few-shot 当作协议前缀，不要在每轮动态拼装或改变排序。</li>
+        <li>工具结果必须结构化收缩，不能把完整 stdout、完整大文件、完整 dependency tree 默认塞回消息日志。</li>
+        <li>上下文折叠要有明确阈值，并把“保留约束、保留未完成状态、保留尾部上下文”写进 summary contract。</li>
+        <li>在 UI 中直接展示 cache hit/miss token 与成本，让 prefix drift 可以被用户和开发者及时发现。</li>
+      </ul>
+    </section>
+
+    <section class="card" id="sources">
+      <h2>源码位置</h2>
+      <ul>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/memory/runtime.ts#L10-L121"><code>src/memory/runtime.ts:10-121</code></a>：ImmutablePrefix、AppendOnlyLog、VolatileScratch 与 fingerprint。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/context-manager.ts#L27-L335"><code>src/context-manager.ts:27-335</code></a>：上下文阈值、fold 决策和 summary 生成。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/loop/shrink.ts#L16-L126"><code>src/loop/shrink.ts:16-126</code></a>：工具结果和 assistant tool args 瘦身。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/tools/filesystem.ts#L327-L352"><code>src/tools/filesystem.ts:327-352</code></a>：大文件 outline 返回策略。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/src/telemetry/stats.ts#L4-L85"><code>src/telemetry/stats.ts:4-85</code></a>：DeepSeek pricing、成本和节省计算。</li>
+        <li><a href="https://github.com/esengine/deepseek-reasonix/blob/1095f5ff52946c07449b4faa7b0cc5dca17477f7/benchmarks/real-world-cache/README.md#L8-L66"><code>benchmarks/real-world-cache/README.md:8-66</code></a>：真实 cache hit 案例和设计解释。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
