@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LOOP 物流优化论文研究笔记</title>
+  <link rel="stylesheet" href="../../../assets/site-nav.css" />
+  <script src="../../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Paper Note · Logistics OR</div>
+      <h1>LOOP：面向物流优化的语言模型编排建模与代码重构管线</h1>
+      <p class="intro">对 SAE 论文《Semantic-Driven Mathematical Modeling and Adaptive Refactoring for Logistics Optimization》的摘要级研究整理，重点看它如何把自然语言需求转成可验证的优化模型与代码。</p>
+      <div class="meta">
+        <span class="tag">2026-99-0750</span>
+        <span class="tag green">CVRP</span>
+        <span class="tag orange">LLM Agents</span>
+        <span class="date">2026-05-15</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#status">资料状态</a>
+      <a href="#problem">核心问题</a>
+      <a href="#pipeline">核心思路</a>
+      <a href="#path">研究路径</a>
+      <a href="#findings">主要发现</a>
+      <a href="#judgment">研究判断</a>
+      <a href="#open-questions">待补问题</a>
+      <a href="#references">线索与引用</a>
+    </nav>
+
+    <section class="summary">
+      <strong>先给判断：</strong>这篇文章的价值不在于让 LLM 直接“解”VRP，而在于把 LLM 放进一个有语义映射、差异同步和多层校验的工程管线里，让它更可靠地完成“需求理解、模型变更、代码生成、预执行检查”这一段建模工作。
+    </section>
+
+    <section id="status" class="card">
+      <h2>资料状态</h2>
+      <p>当前已保存公开元数据与摘要级记录，但未取得全文 PDF。SAE 官方页显示该文为 Technical Paper，OpenAlex 标记为 closed access，且没有开放 PDF URL。</p>
+      <div class="compare">
+        <div class="good">
+          <h3>已保存</h3>
+          <ul>
+            <li>Crossref 元数据：DOI、摘要、参考文献、SAE PDF 下载入口。</li>
+            <li>OpenAlex 元数据：开放获取状态、主题、作者机构。</li>
+            <li>公开记录：题名、作者、发布日期、摘要级要点。</li>
+          </ul>
+        </div>
+        <div class="warning">
+          <h3>未取得</h3>
+          <ul>
+            <li>全文 PDF 未开放获取。</li>
+            <li>附件、数据集和代码未在公开元数据中出现。</li>
+            <li>本文下面的分析基于公开摘要与元数据，不能替代全文精读。</li>
+          </ul>
+        </div>
+      </div>
+      <table>
+        <tbody>
+          <tr>
+            <th>论文</th>
+            <td>Semantic-Driven Mathematical Modeling and Adaptive Refactoring for Logistics Optimization: A Language-Model Orchestrated Optimization Pipeline</td>
+          </tr>
+          <tr>
+            <th>作者</th>
+            <td>Ruiqing Ding, Qianying Li, Xiaojian Li</td>
+          </tr>
+          <tr>
+            <th>机构</th>
+            <td>School of Management, Hefei University of Technology</td>
+          </tr>
+          <tr>
+            <th>来源</th>
+            <td>SAE Technical Paper Series, SAE International</td>
+          </tr>
+          <tr>
+            <th>DOI</th>
+            <td><a href="https://doi.org/10.4271/2026-99-0750">10.4271/2026-99-0750</a></td>
+          </tr>
+          <tr>
+            <th>下载目录</th>
+            <td><a href="download/public-record.md">public-record.md</a> · <a href="download/download-status.md">download-status.md</a> · <a href="download/crossref-10.4271-2026-99-0750.json">Crossref JSON</a> · <a href="download/openalex-W7161132709.json">OpenAlex JSON</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="problem" class="card">
+      <h2>核心问题</h2>
+      <p>物流优化的实际需求经常以自然语言、规则变更和运营目标调整的形式出现。传统 OR 流程需要专家把这些需求改写成数学模型、约束和求解器代码；LLM 虽然能理解需求，却容易生成无效约束、语法错误代码，或者在规则变化时破坏原模型语义。</p>
+      <div class="quote">这篇文章试图解决的不是“LLM 能不能替代优化器”，而是“LLM 能不能在被约束、被校验、被同步的管线里，可靠参与优化建模”。</div>
+      <div class="summary-grid">
+        <div class="mini-card">
+          <h3>输入侧难点</h3>
+          <p>仓储规则、配送容量、运营目标和例外条件通常是半结构化甚至非结构化文本。</p>
+        </div>
+        <div class="mini-card">
+          <h3>模型侧难点</h3>
+          <p>约束、目标函数和变量定义一旦偏离语义，求解器可能仍能运行，但结果不再代表真实业务。</p>
+        </div>
+        <div class="mini-card">
+          <h3>代码侧难点</h3>
+          <p>自然语言到代码的直接生成容易出现语法错误、约束漏写、变量错配和模型代码不同步。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="pipeline" class="card">
+      <h2>核心思路</h2>
+      <p>LOOP 的关键是把 LLM 放在一个“模型-代码同步”的闭环里：先由任务专属 agents 构建数学模型，再通过语义映射和差异分析把模型变化同步到代码，最后在运行前用多层验证发现逻辑不一致。</p>
+      <div class="map-line" aria-label="LOOP pipeline">
+        <span class="node">自然语言需求</span>
+        <span class="arrow">-></span>
+        <span class="node">任务专属 agents</span>
+        <span class="arrow">-></span>
+        <span class="node">数学模型</span>
+        <span class="arrow">-></span>
+        <span class="node">语义映射</span>
+        <span class="arrow">-></span>
+        <span class="node">差异驱动代码生成</span>
+        <span class="arrow">-></span>
+        <span class="node">多层验证</span>
+      </div>
+      <div class="grid-2">
+        <div class="box">
+          <h3>语义驱动建模</h3>
+          <p>把业务文本中的实体、约束、目标和规则变更映射到优化模型元素，避免 LLM 只停留在自然语言解释层。</p>
+        </div>
+        <div class="box">
+          <h3>自适应重构</h3>
+          <p>当业务规则变化时，不是重新生成整段代码，而是识别模型差异，并把变化同步到可执行代码中。</p>
+        </div>
+        <div class="box">
+          <h3>集成差异分析</h3>
+          <p>公开摘要提到 ensemble difference analysis，说明它可能用多个判断器或多轮比较来降低单次 LLM 判断偏差。</p>
+        </div>
+        <div class="box">
+          <h3>运行前验证</h3>
+          <p>在代码执行前检查模型与代码之间的逻辑不一致，目标是把错误拦在求解器运行之前。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="path" class="card">
+      <h2>研究路径</h2>
+      <ol>
+        <li>先定义 LLM 直接生成优化模型与代码的失败模式：无效约束、语法错误、需求变更后模型代码不同步。</li>
+        <li>提出 LOOP，把“自然语言需求 -> 数学模型 -> 可执行代码”拆成可检查、可同步、可重构的多个阶段。</li>
+        <li>用任务专属 agents 构建或维护模型，不把所有责任交给单个通用 LLM 调用。</li>
+        <li>用语义映射和差异分析处理需求变化，让代码修改围绕模型变化展开。</li>
+        <li>引入多层验证，在运行前发现模型和代码之间的逻辑矛盾。</li>
+        <li>在 CVRP 上验证，使用 Augerat benchmark 的 54 个案例，覆盖六个难度层级。</li>
+      </ol>
+    </section>
+
+    <section id="findings" class="card">
+      <h2>主要发现</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>指标</th>
+            <th>公开摘要中的结果</th>
+            <th>研究含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>代码通过率</td>
+            <td><span class="score">96.3%</span> across 54 cases</td>
+            <td>说明管线至少能显著减少语法错误、接口错误或基本逻辑错误。</td>
+          </tr>
+          <tr>
+            <td>解质量差异</td>
+            <td><span class="score">1.5%</span> from expert baselines</td>
+            <td>如果全文定义严谨，这意味着自动生成代码不只是能跑，而且结果接近专家实现。</td>
+          </tr>
+          <tr>
+            <td>任务范围</td>
+            <td>CVRP, Augerat benchmark, six difficulty levels</td>
+            <td>CVRP 是物流 OR 的核心入门问题，但还不能直接证明 VRPTW、库存、仓储调度等复杂场景同样有效。</td>
+          </tr>
+          <tr>
+            <td>能力边界</td>
+            <td>公开摘要未披露运行成本、求解器、agent 细节和失败案例</td>
+            <td>后续必须看全文才能判断方法是否可复现、是否只是 benchmark 友好。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="judgment" class="card">
+      <h2>研究判断</h2>
+      <div class="compare">
+        <div class="good">
+          <h3>为什么值得跟进</h3>
+          <p>它踩中了物流优化落地中的真实痛点：业务规则经常变，纯手写模型慢，纯 LLM 生成又不稳。LOOP 这类“LLM + OR 语义层 + 验证层”的架构，更像可工程化的方向。</p>
+        </div>
+        <div class="warning">
+          <h3>为什么还不能过度乐观</h3>
+          <p>公开摘要只给了 CVRP 结果。CVRP 的约束结构相对标准，和真实物流里的时间窗、多仓、多车型、装载、司机工时、临时订单、数据脏污还有明显距离。</p>
+        </div>
+      </div>
+      <p>如果把这篇放进“AI Agent + 运筹优化”的技术谱系，它更接近 <strong>Optimization Modeling Agent</strong>，而不是 <strong>Routing Solver Agent</strong>。也就是说，它的第一价值是降低建模与改模型的成本，而不是替代成熟求解器。</p>
+    </section>
+
+    <section id="open-questions" class="card">
+      <h2>待补问题</h2>
+      <ul>
+        <li>任务专属 agents 的角色如何划分：需求解析、模型构造、代码生成、验证是否分别由不同 agent 承担？</li>
+        <li>语义映射的数据结构是什么：DSL、schema、约束图、符号表，还是 prompt-level mapping？</li>
+        <li>ensemble difference analysis 如何实现：多模型投票、规则 diff、AST diff，还是模型层和代码层的双向比对？</li>
+        <li>多层验证具体包括哪些层：语法检查、单元测试、约束一致性、可行性检查、目标函数对齐、样例回归？</li>
+        <li>专家基线的定义是什么：人工 OR-Tools 实现、已有启发式、商业求解器模型，还是作者团队代码？</li>
+        <li>失败的 3.7% 案例是什么类型：语法失败、不可行、性能差、还是解质量偏差？</li>
+        <li>能否迁移到 VRPTW、多仓、多车型、库存-路径联合优化和仓储调度？</li>
+      </ul>
+    </section>
+
+    <section id="references" class="card">
+      <h2>线索与引用</h2>
+      <p>Crossref 记录包含 13 条参考文献，能看出文章把自己放在三条线索之间：经典车辆路径问题、LLM 优化建模、模型同步与代码生成。</p>
+      <div class="grid-2">
+        <div class="box">
+          <h3>经典 OR 基础</h3>
+          <ul>
+            <li>Toth and Vigo: vehicle routing problems overview</li>
+            <li>VRPTW 的分布式 ruin-and-recreate GA、离散 PSO、模拟退火等方法</li>
+          </ul>
+        </div>
+        <div class="box">
+          <h3>LLM 与优化建模</h3>
+          <ul>
+            <li>ORLM: automated optimization modeling</li>
+            <li>LM4OPT: LLM formulation of mathematical optimization problems</li>
+            <li>LaTeX2Solver: optimization document to solver code</li>
+          </ul>
+        </div>
+        <div class="box">
+          <h3>LLM 风险背景</h3>
+          <ul>
+            <li>Lost in the Middle: long-context use limits</li>
+            <li>Planning ability critique of LLMs</li>
+            <li>Unfaithful chain-of-thought explanations</li>
+          </ul>
+        </div>
+        <div class="box">
+          <h3>模型同步</h3>
+          <ul>
+            <li>Model Synchronisation and round-trip engineering</li>
+            <li>与 LOOP 的模型-代码同步思想直接相关</li>
+          </ul>
+        </div>
+      </div>
+      <p>公开来源：<a href="https://saemobilus.sae.org/papers/semantic-driven-mathematical-modeling-adaptive-refactoring-logistics-optimization-a-language-model-orchestrated-optimization-pipeline-2026-99-0750">SAE Mobilus</a> · <a href="https://doi.org/10.4271/2026-99-0750">DOI</a> · <a href="https://api.crossref.org/works/10.4271/2026-99-0750">Crossref</a> · <a href="https://api.openalex.org/works/doi:10.4271/2026-99-0750">OpenAlex</a></p>
+    </section>
+  </main>
+</body>
+</html>
