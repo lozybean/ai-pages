@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dijkstra + 势能优化：从 reduced cost 理解最小成本最大流</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <div class="eyebrow">物流运筹 · 最小费用流 · Dijkstra + 势能</div>
+      <h1>Dijkstra + 势能优化：从 reduced cost 理解最小成本最大流</h1>
+      <p class="intro">SPFA 版本把最短路增广的原理讲得很清楚，但工程上更常用 Dijkstra + 势能。势能的作用不是改变原问题，而是把残量网络里的负费用边重标定成非负边权，让 Dijkstra 可以稳定地找到最短费用增广路。</p>
+      <div class="meta"><span class="tag">最小成本最大流</span><span class="tag">Dijkstra</span><span class="tag">势能</span><span class="tag">Reduced Cost</span><span class="tag">原始对偶</span></div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#why">一、为什么需要势能</a>
+      <a href="#concepts">二、核心概念</a>
+      <a href="#algorithm">三、算法流程</a>
+      <a href="#example">四、示例建模</a>
+      <a href="#derive">五、逐轮推导</a>
+      <a href="#proof">六、正确性直觉</a>
+      <a href="#code">七、手写实现要点</a>
+      <a href="#compare">八、和 SPFA 的关系</a>
+    </nav>
+
+    <section id="why" class="card">
+      <h2>一、为什么需要势能</h2>
+      <p>最小成本最大流的入门算法通常是：在残量网络中找一条费用最小的 <code>s -> t</code> 路径，沿路径增广，然后更新正向边和反向边。问题在于，残量网络里会出现负费用反向边。</p>
+      <div class="formula formula-block">原边 u -> v 的单位费用是 c
+如果已经有 1 单位流走过 u -> v
+残量网络中会出现 v -> u，单位费用是 -c</div>
+      <p>SPFA 能处理负边权，所以它适合入门；Dijkstra 默认要求边权非负，所以不能直接在带负反向边的残量网络上跑。</p>
+      <blockquote>势能要解决的核心问题是：不改变哪条路径最短，却把每条可用残量边的“计算费用”变成非负数。</blockquote>
+      <p>这个变换后的费用通常叫 <strong>reduced cost</strong>，也可以翻译成“约化费用”或“重标定费用”。</p>
+
+      <svg role="img" aria-label="势能把真实费用转换为约化费用的示意图：原始残量网络可能有负费用反向边，经过节点势能重标定后，Dijkstra 看到的边权变成非负约化费用" viewBox="0 0 900 300" width="100%">
+        <defs>
+          <marker id="pot-arrow-brown" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+          <marker id="pot-arrow-red" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#9f4d3f"></path>
+          </marker>
+          <marker id="pot-arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#2f6f68"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="898" height="298" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="182" y="45" fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="850" text-anchor="middle">真实残量费用</text>
+        <text x="678" y="45" fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="18" font-weight="850" text-anchor="middle">Dijkstra 看到的约化费用</text>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="95" cy="150" r="34"></circle>
+          <circle cx="265" cy="150" r="34"></circle>
+          <circle cx="585" cy="150" r="34"></circle>
+          <circle cx="755" cy="150" r="34"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="22" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="95" y="150">v</text>
+          <text x="265" y="150">u</text>
+          <text x="585" y="150">v</text>
+          <text x="755" y="150">u</text>
+        </g>
+        <path d="M132 132 C178 92, 222 92, 258 132" fill="none" stroke="#8a5a35" stroke-width="4" marker-end="url(#pot-arrow-brown)"></path>
+        <path d="M258 168 C214 208, 170 208, 132 168" fill="none" stroke="#9f4d3f" stroke-width="4" stroke-dasharray="8 8" marker-end="url(#pot-arrow-red)"></path>
+        <path d="M622 132 C668 92, 712 92, 748 132" fill="none" stroke="#2f6f68" stroke-width="4" marker-end="url(#pot-arrow-green)"></path>
+        <path d="M748 168 C704 208, 660 208, 622 168" fill="none" stroke="#2f6f68" stroke-width="4" stroke-dasharray="8 8" marker-end="url(#pot-arrow-green)"></path>
+        <text x="181" y="88" fill="#8a5a35" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="850" text-anchor="middle">u -> v: +c</text>
+        <text x="181" y="225" fill="#9f4d3f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="850" text-anchor="middle">v -> u: -c</text>
+        <text x="676" y="88" fill="#2f6f68" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="850" text-anchor="middle">reduced cost >= 0</text>
+        <text x="676" y="225" fill="#2f6f68" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="850" text-anchor="middle">反向边也 >= 0</text>
+        <path d="M350 150 L510 150" fill="none" stroke="#8a5a35" stroke-width="4" marker-end="url(#pot-arrow-brown)"></path>
+        <text x="430" y="135" fill="#8a5a35" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="850" text-anchor="middle">加节点势能</text>
+        <text x="430" y="172" fill="#6f675f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="13" text-anchor="middle">路径排序不变</text>
+      </svg>
+    </section>
+
+    <section id="concepts" class="card">
+      <h2>二、核心概念</h2>
+      <h3>1. 势能 potential</h3>
+      <p>给每个点一个数，记为 <code>potential[v]</code>。它可以理解为节点的价格、海拔或对偶变量。算法不会直接拿原始费用 <code>cost(u, v)</code> 跑 Dijkstra，而是使用约化费用：</p>
+      <div class="formula formula-block">reduced_cost(u, v) = cost(u, v) + potential[u] - potential[v]</div>
+      <p>只要对每条有残量的边都满足：</p>
+      <div class="formula formula-block">reduced_cost(u, v) >= 0</div>
+      <p>Dijkstra 就可以安全运行。</p>
+
+      <h3>2. 为什么路径最短关系不变</h3>
+      <p>对任意一条从 <code>s</code> 到 <code>t</code> 的路径，所有中间点的势能会一正一负抵消：</p>
+      <div class="formula formula-block">sum(reduced_cost)
+= sum(cost(u, v) + potential[u] - potential[v])
+= sum(cost) + potential[s] - potential[t]</div>
+      <p>对于同一轮搜索，<code>potential[s] - potential[t]</code> 是常数，所以路径之间的相对大小不变。</p>
+      <div class="summary">
+        Dijkstra 在约化费用上找到的最短路，仍然对应真实费用意义下的最短增广路。势能只是换了一把尺子，没有换问题。
+      </div>
+
+      <h3>3. 初始势能怎么来</h3>
+      <table>
+        <thead><tr><th>场景</th><th>初始化方式</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>原始费用非负</td><td><code>potential[v] = 0</code></td><td>初始残量图只有原边，没有负费用反向边，可以直接跑第一轮 Dijkstra。</td></tr>
+          <tr><td>存在负费用原边</td><td>先跑一次 Bellman-Ford / SPFA</td><td>用从 <code>s</code> 到各点的最短距离作为初始势能，使约化费用非负。</td></tr>
+          <tr><td>存在负费用环</td><td>不能直接套普通最短路增广</td><td>需要先处理负环或换成更完整的最小费用循环 / 原始对偶框架。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>4. 每轮如何更新势能</h3>
+      <p>Dijkstra 结束后，得到当前约化费用下从 <code>s</code> 到每个点的最短距离 <code>dist[v]</code>。对可达点更新：</p>
+      <div class="formula formula-block">potential[v] = potential[v] + dist[v]</div>
+      <p>这一步把刚刚发现的最短路信息吸收到节点价格中。更新之后，下一轮残量图里的可用边仍然可以保持非负约化费用。</p>
+    </section>
+
+    <section id="algorithm" class="card">
+      <h2>三、算法流程</h2>
+      <p>Dijkstra + 势能版最小成本最大流仍然是“最短路增广”。它和 SPFA 版本的不同点只有一个：每轮最短路用约化费用，而不是直接用真实费用。</p>
+      <div class="map-line" aria-label="Dijkstra 加势能的费用流流程">
+        <span class="node">初始化势能</span>
+        <span class="arrow">-></span>
+        <span class="node">用 reduced cost 跑 Dijkstra</span>
+        <span class="arrow">-></span>
+        <span class="node">恢复真实路径费用</span>
+        <span class="arrow">-></span>
+        <span class="node">更新势能</span>
+        <span class="arrow">-></span>
+        <span class="node">沿路径增广</span>
+      </div>
+      <pre><code>flow = 0
+total_cost = 0
+potential[v] = 0  // if all original costs are non-negative
+
+while t is reachable by Dijkstra on reduced_cost:
+    path_cost = dist[t] + potential[t] - potential[s]
+
+    for each reachable vertex v:
+        potential[v] += dist[v]
+
+    delta = min residual capacity on the restored s -> t path
+
+    for each edge e on the path:
+        e.cap -= delta
+        e.rev.cap += delta
+
+    flow += delta
+    total_cost += delta * path_cost</code></pre>
+      <div class="box note">
+        <span class="label">顺序说明</span>
+        <p>实际代码里常见写法是先根据 <code>dist</code> 更新势能，再沿最短路增广；也可以先记录真实路径费用，再更新势能。关键是不要把约化费用 <code>dist[t]</code> 直接当成真实费用。</p>
+      </div>
+    </section>
+
+    <section id="example" class="card">
+      <h2>四、示例建模</h2>
+      <p>继续使用一个 2 个工人、2 个任务的最小成本指派例子。每个工人最多做 1 个任务，每个任务需要 1 个工人。中间边上的数字是单位成本。</p>
+      <table>
+        <thead><tr><th>工人</th><th>任务 X</th><th>任务 Y</th></tr></thead>
+        <tbody>
+          <tr><td>A</td><td>1</td><td>2</td></tr>
+          <tr><td>B</td><td>2</td><td>100</td></tr>
+        </tbody>
+      </table>
+      <p>直觉上，第一轮最便宜路径会选择 <code>A -> X</code>。但要完成两个任务，最终最优方案是 <code>A -> Y</code> 和 <code>B -> X</code>，总成本是 <code>4</code>。第二轮必须经过反向边 <code>X -> A</code> 撤销第一轮的选择。</p>
+
+      <svg role="img" aria-label="2x2 指派费用流网络，源点连接 A 和 B，A 到 X 成本 1，A 到 Y 成本 2，B 到 X 成本 2，B 到 Y 成本 100，X 和 Y 连接汇点" viewBox="0 0 940 480" width="100%">
+        <defs>
+          <marker id="pot-example-arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+          <marker id="pot-example-hot" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#9f4d3f"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="938" height="478" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g stroke="#8a5a35" stroke-width="4" fill="none" marker-end="url(#pot-example-arrow)">
+          <line x1="112" y1="240" x2="247" y2="143"></line>
+          <line x1="112" y1="240" x2="247" y2="337"></line>
+          <line x1="316" y1="138" x2="605" y2="138"></line>
+          <line x1="314" y1="159" x2="605" y2="321"></line>
+          <line x1="314" y1="321" x2="605" y2="159"></line>
+          <line x1="316" y1="342" x2="605" y2="342"></line>
+          <line x1="674" y1="143" x2="812" y2="240"></line>
+          <line x1="674" y1="337" x2="812" y2="240"></line>
+        </g>
+        <path d="M316 138 L605 138" fill="none" stroke="#9f4d3f" stroke-width="6" marker-end="url(#pot-example-hot)"></path>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="76" cy="240" r="36"></circle>
+          <circle cx="282" cy="138" r="36"></circle>
+          <circle cx="282" cy="342" r="36"></circle>
+          <circle cx="640" cy="138" r="36"></circle>
+          <circle cx="640" cy="342" r="36"></circle>
+          <circle cx="848" cy="240" r="36"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="23" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="76" y="240">s</text><text x="282" y="138">A</text><text x="282" y="342">B</text><text x="640" y="138">X</text><text x="640" y="342">Y</text><text x="848" y="240">t</text>
+        </g>
+        <g fill="#8a5a35" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="850" text-anchor="middle">
+          <text x="163" y="156">1 / 0</text><text x="163" y="340">1 / 0</text>
+          <text x="461" y="112" fill="#9f4d3f">1 / 1</text><text x="458" y="220">1 / 2</text><text x="458" y="282">1 / 2</text><text x="461" y="371">1 / 100</text>
+          <text x="745" y="156">1 / 0</text><text x="745" y="340">1 / 0</text>
+        </g>
+        <text x="470" y="430" fill="#6f675f" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" text-anchor="middle">第一轮最短路径是 s -> A -> X -> t，真实费用为 1。</text>
+      </svg>
+    </section>
+
+    <section id="derive" class="card">
+      <h2>五、逐轮推导</h2>
+      <h3>第 0 步：初始势能</h3>
+      <p>所有原始费用非负，所以初始势能全部设为 0：</p>
+      <div class="formula formula-block">potential[s] = potential[A] = potential[B] = potential[X] = potential[Y] = potential[t] = 0</div>
+      <p>此时约化费用等于真实费用，Dijkstra 可以直接运行。</p>
+
+      <h3>第 1 轮：走最便宜的 A -> X</h3>
+      <table>
+        <thead><tr><th>点</th><th>Dijkstra 距离 dist</th><th>解释</th></tr></thead>
+        <tbody>
+          <tr><td><code>s</code></td><td>0</td><td>源点。</td></tr>
+          <tr><td><code>A</code></td><td>0</td><td><code>s -> A</code> 成本 0。</td></tr>
+          <tr><td><code>B</code></td><td>0</td><td><code>s -> B</code> 成本 0。</td></tr>
+          <tr><td><code>X</code></td><td>1</td><td>通过 <code>A -> X</code>。</td></tr>
+          <tr><td><code>Y</code></td><td>2</td><td>通过 <code>A -> Y</code>。</td></tr>
+          <tr><td><code>t</code></td><td>1</td><td><code>s -> A -> X -> t</code>。</td></tr>
+        </tbody>
+      </table>
+      <p>第一条增广路径是：</p>
+      <div class="formula formula-block">s -> A -> X -> t
+约化费用 = 1
+真实费用 = dist[t] + potential[t] - potential[s] = 1 + 0 - 0 = 1</div>
+      <p>沿路径增广 1 单位流。然后把本轮最短距离吸收到势能：</p>
+      <div class="formula formula-block">potential[s] = 0
+potential[A] = 0
+potential[B] = 0
+potential[X] = 1
+potential[Y] = 2
+potential[t] = 1</div>
+
+      <h3>第 1 轮之后：负费用反向边被势能压平</h3>
+      <p>因为 <code>A -> X</code> 已经走了 1 单位流，残量网络中出现反向边 <code>X -> A</code>，真实费用是 <code>-1</code>。现在看它的约化费用：</p>
+      <div class="formula formula-block">reduced_cost(X, A)
+= cost(X, A) + potential[X] - potential[A]
+= -1 + 1 - 0
+= 0</div>
+      <p>这就是势能的核心效果：真实费用中出现了负边，但 Dijkstra 看到的是非负约化费用。</p>
+
+      <svg role="img" aria-label="第一轮增广后的残量网络，X 到 A 出现真实费用为负一的反向边，但约化费用为零；第二轮可走 s 到 B 到 X 到 A 到 Y 到 t" viewBox="0 0 960 520" width="100%">
+        <defs>
+          <marker id="pot-round-forward" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#2f6f68"></path>
+          </marker>
+          <marker id="pot-round-back" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#9f4d3f"></path>
+          </marker>
+        </defs>
+        <rect x="1" y="1" width="958" height="518" rx="18" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <g stroke="#d8cec1" stroke-width="3" fill="none">
+          <line x1="112" y1="240" x2="247" y2="143"></line>
+          <line x1="316" y1="138" x2="605" y2="138"></line>
+          <line x1="674" y1="143" x2="812" y2="240"></line>
+          <line x1="316" y1="342" x2="605" y2="342"></line>
+        </g>
+        <g stroke="#2f6f68" stroke-width="5" fill="none" marker-end="url(#pot-round-forward)">
+          <line x1="112" y1="240" x2="247" y2="337"></line>
+          <line x1="314" y1="321" x2="605" y2="159"></line>
+          <line x1="314" y1="159" x2="605" y2="321"></line>
+          <line x1="674" y1="337" x2="812" y2="240"></line>
+        </g>
+        <path d="M600 126 C500 76, 400 76, 322 126" fill="none" stroke="#9f4d3f" stroke-width="5" stroke-dasharray="9 8" marker-end="url(#pot-round-back)"></path>
+        <g fill="#fffdf8" stroke="#d9c6b1" stroke-width="3">
+          <circle cx="76" cy="240" r="36"></circle>
+          <circle cx="282" cy="138" r="36"></circle>
+          <circle cx="282" cy="342" r="36"></circle>
+          <circle cx="640" cy="138" r="36"></circle>
+          <circle cx="640" cy="342" r="36"></circle>
+          <circle cx="848" cy="240" r="36"></circle>
+        </g>
+        <g fill="#24211d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="23" font-weight="850" text-anchor="middle" dominant-baseline="middle">
+          <text x="76" y="240">s</text><text x="282" y="138">A</text><text x="282" y="342">B</text><text x="640" y="138">X</text><text x="640" y="342">Y</text><text x="848" y="240">t</text>
+        </g>
+        <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="14" font-weight="850" text-anchor="middle">
+          <text x="162" y="348" fill="#2f6f68">0 / rc 0</text>
+          <text x="455" y="246" fill="#2f6f68">B -> X: 2 / rc 1</text>
+          <text x="458" y="305" fill="#2f6f68">A -> Y: 2 / rc 0</text>
+          <text x="745" y="350" fill="#2f6f68">0 / rc 1</text>
+          <text x="461" y="76" fill="#9f4d3f">X -> A: -1 / rc 0</text>
+          <text x="460" y="450" fill="#6f675f" font-size="15">第二轮 Dijkstra 在非负约化费用上找到 s -> B -> X -> A -> Y -> t。</text>
+        </g>
+      </svg>
+
+      <h3>第 2 轮：用反向边重排第一轮选择</h3>
+      <p>第二轮在约化费用上跑 Dijkstra，关键边如下：</p>
+      <table>
+        <thead><tr><th>残量边</th><th>真实费用</th><th>约化费用</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><code>s -> B</code></td><td>0</td><td>0</td><td>B 还没被使用。</td></tr>
+          <tr><td><code>B -> X</code></td><td>2</td><td>1</td><td>B 可以接任务 X。</td></tr>
+          <tr><td><code>X -> A</code></td><td>-1</td><td>0</td><td>撤销第一轮的 A -> X。</td></tr>
+          <tr><td><code>A -> Y</code></td><td>2</td><td>0</td><td>让 A 改接任务 Y。</td></tr>
+          <tr><td><code>Y -> t</code></td><td>0</td><td>1</td><td>任务 Y 被完成。</td></tr>
+        </tbody>
+      </table>
+      <p>最短增广路径是：</p>
+      <div class="formula formula-block">s -> B -> X -> A -> Y -> t
+约化费用 = 0 + 1 + 0 + 0 + 1 = 2
+真实费用 = dist[t] + potential[t] - potential[s] = 2 + 1 - 0 = 3</div>
+      <p>这 3 的含义很重要：它不是最终总费用，而是第二轮在当前流基础上的边际调整费用。</p>
+      <div class="formula formula-block">当前总费用 = 1
+第二轮边际费用 = B->X(2) + X->A(-1) + A->Y(2) = 3
+最终总费用 = 1 + 3 = 4</div>
+      <p>沿第二条路径增广后，<code>X -> A</code> 会撤销 <code>A -> X</code> 的 1 单位流，最终方案变成：</p>
+      <div class="summary-grid">
+        <article class="mini-card">
+          <div class="card-head"><h4>A -> Y</h4><span class="tag green">成本 2</span></div>
+          <p>A 不再做 X，而是做 Y。</p>
+        </article>
+        <article class="mini-card">
+          <div class="card-head"><h4>B -> X</h4><span class="tag green">成本 2</span></div>
+          <p>B 接手 X，避开了 B -> Y 的高成本。</p>
+        </article>
+      </div>
+      <div class="good"><strong>最终最大流量是 2，总费用是 4。</strong>势能没有阻止反向边发挥作用，只是把负费用反向边换算成 Dijkstra 可以处理的非负约化费用。</div>
+    </section>
+
+    <section id="proof" class="card">
+      <h2>六、正确性直觉</h2>
+      <h3>1. 约化费用不改变最短路</h3>
+      <p>前面已经看到，对任意 <code>s -> t</code> 路径：</p>
+      <div class="formula formula-block">reduced_path_cost = real_path_cost + potential[s] - potential[t]</div>
+      <p>同一轮里，起点和终点固定，所以所有路径都被加上同一个常数。谁真实费用最小，谁的约化费用也最小。</p>
+
+      <h3>2. 势能更新保持非负边权</h3>
+      <p>假设当前所有可用残量边都有非负约化费用。Dijkstra 得到距离 <code>dist</code> 后，对于任意从可达点 <code>u</code> 指向 <code>v</code> 的残量边，都有最短路松弛条件：</p>
+      <div class="formula formula-block">dist[v] <= dist[u] + reduced_cost(u, v)</div>
+      <p>更新势能后，新约化费用是：</p>
+      <div class="formula formula-block">new_reduced_cost(u, v)
+= cost(u, v) + new_potential[u] - new_potential[v]
+= old_reduced_cost(u, v) + dist[u] - dist[v]
+>= 0</div>
+      <p>因此下一轮仍然能用 Dijkstra。沿最短路增广后，新出现的反向边也对应这条最短路上的等式边，约化费用为 0，不会破坏非负性。</p>
+
+      <h3>3. 为什么仍然是最小费用增广</h3>
+      <p>每一轮 Dijkstra 找到的是当前残量网络中的最短费用增广路径。残量网络同时包含新增和撤销两类动作，所以它不是在原始图中做简单贪心，而是在当前流方案附近找最低成本的可行调整。</p>
+      <blockquote>从 SPFA 到 Dijkstra + 势能，最优性来源没有改变：仍然是残量网络中的最短费用增广。势能只是让最短路这一步更稳定。</blockquote>
+      <div class="box warning">
+        <span class="label">证明边界</span>
+        <p>严格证明通常会放在原始对偶算法框架里，用可行势能、互补松弛和最短路最优性来说明。本文的关键是先掌握三个可手推的不变式：路径排序不变、约化费用非负、每轮仍是最短费用增广。</p>
+      </div>
+    </section>
+
+    <section id="code" class="card">
+      <h2>七、手写实现要点</h2>
+      <h3>1. 边结构仍然要记录反向边</h3>
+      <p>Dijkstra + 势能只替换了最短路算法，残量网络结构和 SPFA 版本完全一样。</p>
+      <pre><code>struct Edge {
+    int to;
+    int rev;
+    int cap;
+    int cost;
+};</code></pre>
+
+      <h3>2. Dijkstra 松弛的是约化费用</h3>
+      <p>松弛时不要直接使用 <code>edge.cost</code>，而要使用：</p>
+      <div class="formula formula-block">rcost = edge.cost + potential[u] - potential[v]</div>
+      <pre><code>if edge.cap > 0:
+    rcost = edge.cost + potential[u] - potential[edge.to]
+    if dist[edge.to] > dist[u] + rcost:
+        dist[edge.to] = dist[u] + rcost
+        parent_node[edge.to] = u
+        parent_edge[edge.to] = edge_index</code></pre>
+
+      <h3>3. 总费用要用真实费用</h3>
+      <p><code>dist[t]</code> 是约化费用距离，不是真实路径费用。更新总费用时使用：</p>
+      <div class="formula formula-block">real_path_cost = dist[t] + potential[t] - potential[s]
+total_cost += delta * real_path_cost</div>
+
+      <h3>4. 势能只更新可达点</h3>
+      <p>如果某个点本轮不可达，<code>dist[v]</code> 是无穷大，不应该拿来更新势能。</p>
+      <pre><code>for each vertex v:
+    if dist[v] < INF:
+        potential[v] += dist[v]</code></pre>
+
+      <h3>5. 推荐对拍顺序</h3>
+      <p>手写时不要一上来就只测大样例。先让 SPFA 版本和 Dijkstra + 势能版本在小图上互相对拍，再上随机费用流。</p>
+      <div class="formula formula-block">小规模 brute force 或 SPFA 费用流
+vs
+Dijkstra + potential 费用流
+
+检查：
+  flow 是否相同
+  total_cost 是否相同
+  每轮 reduced_cost 是否都非负</div>
+    </section>
+
+    <section id="compare" class="card">
+      <h2>八、和 SPFA 的关系</h2>
+      <table>
+        <thead><tr><th>维度</th><th>SPFA 最短路增广</th><th>Dijkstra + 势能</th></tr></thead>
+        <tbody>
+          <tr><td>最短路边权</td><td>直接使用真实费用，可以有负边。</td><td>使用约化费用，保持非负。</td></tr>
+          <tr><td>实现难度</td><td>低，适合理解残量网络和反向边。</td><td>中等，需要维护势能和真实费用换算。</td></tr>
+          <tr><td>性能稳定性</td><td>依赖数据，最坏情况不稳定。</td><td>通常更稳定，适合更大规模稀疏图。</td></tr>
+          <tr><td>共同核心</td><td colspan="2">都在残量网络中寻找最短费用增广路，并通过反向边保留撤销和重排能力。</td></tr>
+        </tbody>
+      </table>
+      <div class="note">延伸阅读：<a href="min-cost-max-flow-spfa-augmentation.html">SPFA 最短路增广推导</a>可以作为本文前置；<a href="min-cost-max-flow.html">最小成本最大流总览</a>梳理了费用流的业务建模入口。</div>
+      <blockquote>如果说 SPFA 篇让你看清“为什么残量网络能反悔”，那么 Dijkstra + 势能要补上的就是“如何在有反悔边的网络里继续稳定地用 Dijkstra”。</blockquote>
+    </section>
+
+    <footer><p>相关延伸：最大流、Ford-Fulkerson、Edmonds-Karp、Dinic、最小成本最大流总览和 SPFA 最短路增广文章共同构成网络流基础算法链条。</p></footer>
+  </main>
+</body>
+</html>
