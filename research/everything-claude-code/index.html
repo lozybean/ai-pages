@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Everything Claude Code / ECC 仓库分析与使用建议</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Research · Agent Harness Workflow</div>
+      <h1>Everything Claude Code / ECC 仓库分析与使用建议</h1>
+      <p class="intro">基于 <a href="https://github.com/affaan-m/ECC">affaan-m/ECC</a> 当前源码快照，分析它对 Codex、Claude Code 与日常 agent 工作流的可复用价值，并给出选择性采用方案。</p>
+      <div class="meta">
+        <span class="tag">ECC 2.0.0</span>
+        <span class="tag green">commit 71d22d0</span>
+        <span class="tag orange">Codex 选择性吸收</span>
+        <span class="date">生成：2026-06-22</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#scope">调研口径</a>
+      <a href="#conclusion">核心判断</a>
+      <a href="#repo-shape">仓库形态</a>
+      <a href="#codex">Codex 推荐用法</a>
+      <a href="#daily">日常工作用法</a>
+      <a href="#adoption">采用路径</a>
+      <a href="#risks">风险边界</a>
+      <a href="#sources">证据来源</a>
+    </nav>
+
+    <section class="summary" id="scope">
+      <h2>调研口径</h2>
+      <p><code>https://github.com/affaan-m/everything-claude-code</code> 当前会解析到实际仓库 <code>affaan-m/ECC</code>。分析基于 <code>main</code> 快照 <code>71d22d0a77b7e0684f4e51cba03749b788993cdb</code>，并交叉阅读 README、<code>.codex/</code>、skills、rules、hooks、install manifests、MCP policy、security guide 与测试/CI 脚本。</p>
+      <p>README badge 中的 stars/forks 等营销数字不作为判断依据。真正影响使用建议的是文件结构、安装边界、Codex 适配方式、hook/MCP 的执行风险，以及哪些工作流能被迁移到当前 Codex。</p>
+    </section>
+
+    <section class="card" id="conclusion">
+      <h2>核心判断</h2>
+      <p class="quote">ECC 最值得借鉴的不是“装一套 Claude Code 配置”，而是把 agent 工作拆成可复用的 workflow primitives：skills、rules、verification、security boundary、context strategy、MCP selection 和 multi-agent handoff。</p>
+      <div class="compare">
+        <div class="good">
+          <h3>推荐吸收</h3>
+          <p>把 ECC 当成工作流模式库。优先吸收 <code>tdd-workflow</code>、<code>verification-loop</code>、<code>security-review</code>、<code>strategic-compact</code>、<code>deep-research</code>、语言/framework rules、MCP 最小化原则、以及“研究 → 计划 → 实现 → review → 验证”的阶段化交付习惯。</p>
+        </div>
+        <div class="warning">
+          <h3>不建议照搬</h3>
+          <p>不要把 full profile、全量 rules、全量 MCP、全局 git hooks 和 <code>yolo</code> 形态直接装到日常机器。Codex 当前没有 Claude Code hook parity，ECC 的 Codex plugin 路径也被仓库自身标注为 fragile；更稳的是项目级选择性同步、dry-run、最小 MCP 和人工审批。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="repo-shape">
+      <h2>仓库形态：从 Claude Code 配置库演化成跨 harness 操作系统</h2>
+      <p>仓库 README 已把 ECC 定义成跨 Codex、Claude Code、Cursor、OpenCode、Gemini、Zed、GitHub Copilot 等 harness 的 operator system。<code>package.json</code> 也把 <code>.agents/</code>、<code>.codex/</code>、<code>.cursor/</code>、<code>.opencode/</code>、<code>rules/</code>、<code>hooks/</code>、<code>skills/</code>、<code>mcp-configs/</code> 和安装脚本都列为发布面。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>层</th>
+            <th>仓库中的证据</th>
+            <th>工程含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Skills</td>
+            <td><code>skills/*/SKILL.md</code> 共 271 个，<code>.agents/skills</code> 也提供 Codex/OpenAI 元数据</td>
+            <td>这是最值得复用的单元。它比“把所有原则塞进 AGENTS.md”更可控，适合按任务触发。</td>
+          </tr>
+          <tr>
+            <td>Rules</td>
+            <td><code>rules/common</code> 加 TypeScript、Python、Go、Java、React、Rust 等语言包</td>
+            <td>适合作为项目规范素材，但要按团队风格裁剪。全量加载会带来上下文和冲突成本。</td>
+          </tr>
+          <tr>
+            <td>Agents</td>
+            <td>根 <code>AGENTS.md</code> 列出 planner、reviewer、security、build resolver 等角色</td>
+            <td>适合抽象成 Codex multi-agent 角色，但父 agent 必须带目标背景，不应只丢一个模糊查询。</td>
+          </tr>
+          <tr>
+            <td>Commands</td>
+            <td>92 个 legacy command shims；根说明把 <code>skills/</code> 定为 canonical workflow surface</td>
+            <td>日常使用应优先 skills-first。Slash command 更像入口别名，不是长期维护中心。</td>
+          </tr>
+          <tr>
+            <td>Hooks</td>
+            <td><code>hooks/</code> 和 <code>scripts/hooks/</code> 覆盖格式化、质量门禁、上下文提醒、成本监控等</td>
+            <td>Claude Code/Cursor/OpenCode 更可用；Codex 不能等价迁移，应改成显式验证命令、git hook 或人工 checklist。</td>
+          </tr>
+          <tr>
+            <td>MCP</td>
+            <td>MCP policy 把默认 connector 收缩为 <code>chrome-devtools</code>，其他服务改为 opt-in</td>
+            <td>这是正确方向：默认少开连接器，能用 CLI/API + skill 解决的，不要常驻 MCP。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="codex">
+      <h2>Codex 推荐用法</h2>
+      <h3>1. 把 ECC 当作候选素材库，不要直接覆盖本机全局配置</h3>
+      <p>ECC 的 Codex 同步脚本会备份 <code>~/.codex/config.toml</code> 和 <code>~/.codex/AGENTS.md</code>，用 marker 合并 AGENTS 内容，并把 baseline config 以 add-only 方式合入。这个设计方向是对的，但它仍会触及用户全局目录、prompt 文件和 git hooks。推荐先在临时环境或测试账号中跑 dry-run，确认差异后再决定是否吸收。</p>
+      <pre><code>git clone https://github.com/affaan-m/ECC.git
+cd ECC
+npm install
+bash scripts/sync-ecc-to-codex.sh --dry-run</code></pre>
+
+      <h3>2. Codex 插件路径先当 discovery，不当主安装路径</h3>
+      <p><code>.codex-plugin/README.md</code> 自己说明 Codex repo marketplace 安装目前存在 runtime skill loading 不可靠的问题，并建议使用 manual sync。实际推荐是：需要研究 ECC 时可看 plugin manifest 和 marketplace；真正落到日常 Codex，则优先用项目内 <code>AGENTS.md</code>、少量 <code>.agents/skills</code>、项目级 <code>.codex/config.toml</code> 和明确的验证脚本。</p>
+
+      <h3>3. 复制 config 思路，而不是复制每一行 config</h3>
+      <p><code>.codex/config.toml</code> 中比较稳的思路是：<code>approval_policy = "on-request"</code>、<code>sandbox_mode = "workspace-write"</code>、严格 profile 使用 read-only、多 agent 角色只做一层浅委派。需要谨慎的是模型名、默认 MCP 集、通知命令和 yolo profile；这些都应按本机 Codex 版本和当前项目风险复核。</p>
+
+      <h3>4. Codex 没有 hook parity，安全边界应落在 sandbox、approval 和验证命令</h3>
+      <p>ECC 的 Codex supplement 明确列出差异：Claude Code 有 hook 事件，Codex 侧主要靠 <code>AGENTS.md</code>、skills、<code>config.toml</code>、MCP 与 sandbox。迁移到 Codex 时，不要把 Claude hook 中的自动格式化、拦截、记忆、质量门禁理解为“已经自动生效”。更实际的做法是把它们变成：</p>
+      <ul>
+        <li>提交前显式运行的 <code>test/lint/typecheck/security</code> 命令；</li>
+        <li>项目级 CI 或 repo-local git hooks；</li>
+        <li>Codex 中每次写文件/提交前必须执行的 verification checklist；</li>
+        <li>对 network、off-repo write、secret path、deploy、push 的审批边界。</li>
+      </ul>
+
+      <h3>5. MCP 默认少开，任务需要时再启用</h3>
+      <p>README 早期内容还保留 GitHub、Context7、Exa、Memory、Playwright、Sequential Thinking 等默认集合的说法；但 MCP policy 和 <code>merge-mcp-config.js</code> 已经把当前默认集收缩为 <code>chrome-devtools</code>。这反而是最值得采用的原则：在 Codex 中优先使用内建搜索、CLI、一次性 API 调用和 task-scoped skill；只有浏览器调试这类需要持久交互会话的场景，才默认考虑 MCP。</p>
+    </section>
+
+    <section class="card" id="daily">
+      <h2>日常工作推荐用法</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>场景</th>
+            <th>推荐用法</th>
+            <th>从 ECC 借鉴的具体点</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>新功能 / bugfix</td>
+            <td>中大型任务先写 plan，再进入 RED → GREEN → refactor → evidence report。小任务可直接做，但仍要跑相关验证。</td>
+            <td><code>tdd-workflow</code> 把计划视为不可信输入，要求先转成可测试保证，并保留 RED/GREEN 证据。</td>
+          </tr>
+          <tr>
+            <td>提交前验证</td>
+            <td>把 build、typecheck、lint、test、security scan、diff review 固化成项目脚本或 checklist。</td>
+            <td><code>verification-loop</code> 的阶段化质量门禁可迁移到 Codex prompt、CI 或 repo-local scripts。</td>
+          </tr>
+          <tr>
+            <td>安全敏感改动</td>
+            <td>对 auth、输入、上传、API、secrets、支付、第三方集成强制安全 review；不要让模型绕过审批边界。</td>
+            <td><code>security-review</code>、security guide 和 SECURITY.md 都把 secrets、输入验证、权限、供应链当成一等风险面。</td>
+          </tr>
+          <tr>
+            <td>长会话</td>
+            <td>在“探索 → 计划”“计划 → 实现”“debug → 新任务”这些边界 compact；不要在实现一半时 compact。</td>
+            <td><code>strategic-compact</code> 的价值不是自动压缩，而是按任务阶段清理上下文。</td>
+          </tr>
+          <tr>
+            <td>研究和报告</td>
+            <td>拆成 3-5 个子问题，优先读取 primary source，区分事实与推断，长报告落成文件。</td>
+            <td><code>deep-research</code> 的质量规则很适合 Codex：每个关键 claim 要有来源，单一来源要标为未充分验证。</td>
+          </tr>
+          <tr>
+            <td>多 agent / 并行</td>
+            <td>只有任务彼此独立时才并行；并行修改代码必须用 worktree 或明确文件边界；子 agent 输出要被父 agent 复核。</td>
+            <td>longform guide 的 iterative retrieval pattern 和 sequential phases 比“开很多终端”更可靠。</td>
+          </tr>
+          <tr>
+            <td>团队规范沉淀</td>
+            <td>把稳定规则放到项目 AGENTS.md 或 docs；把任务型流程放进 skill；把临时探索结论写成报告或记忆摘要。</td>
+            <td>ECC 的 skills-first 和 rules 分层能减少 AGENTS.md 膨胀，但必须避免重复上下文。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="adoption">
+      <h2>推荐采用路径</h2>
+      <h3>阶段一：只读评估</h3>
+      <p>先不要安装。把 ECC 当成参考仓库读三类文件：<code>skills/*/SKILL.md</code>、<code>rules/common</code> 与 <code>docs/MCP-CONNECTOR-POLICY.md</code>。如果目标是 Codex，重点看 <code>.codex/AGENTS.md</code>、<code>.codex/config.toml</code>、<code>.codex/agents/*.toml</code> 和 <code>scripts/sync-ecc-to-codex.sh</code>。</p>
+
+      <h3>阶段二：选择性 dry-run</h3>
+      <p>在 ECC 仓库安装依赖后，用 consult/plan 先看安装计划。裸 clone 下 <code>install-plan.js</code> 会因为缺少依赖而失败，这是正常的源码使用前提，不应跳过。</p>
+      <pre><code>npm install
+node scripts/consult.js "security review" --target codex --json
+node scripts/install-plan.js --profile minimal --target codex --json
+node scripts/install-plan.js --profile minimal --target codex --with skill:security-review --json</code></pre>
+
+      <h3>阶段三：迁移少量高价值资产</h3>
+      <p>最值得先迁移的不是 full profile，而是少量稳定资产：</p>
+      <ul>
+        <li><code>security-review</code>：作为 auth/API/secrets 变更的强制 checklist；</li>
+        <li><code>verification-loop</code>：作为提交前报告模板；</li>
+        <li><code>strategic-compact</code>：作为长任务上下文策略；</li>
+        <li><code>tdd-workflow</code>：中大型行为变更时使用，但要按当前项目实际测试体系调整；</li>
+        <li><code>deep-research</code>：研究任务使用，但工具名和搜索 API 要按当前环境复核。</li>
+      </ul>
+
+      <h3>阶段四：项目级固化</h3>
+      <p>把筛选后的规则落到项目自身的 <code>AGENTS.md</code>、<code>docs/</code>、CI、Makefile/npm scripts 或 repo-local hooks，而不是依赖用户全局状态。对团队协作而言，项目级可复现比个人全局增强更重要。</p>
+    </section>
+
+    <section class="card" id="risks">
+      <h2>风险边界与反模式</h2>
+      <div class="warning">
+        <h3>不要 stack install methods</h3>
+        <p>README 明确警告：Claude plugin、manual installer、full profile 叠加会制造重复 skills、重复 runtime 行为和难排查的状态。Codex 也应遵循同样原则：一个环境只保留一条清晰安装路径。</p>
+      </div>
+      <div class="warning">
+        <h3>谨慎使用全局 git hooks</h3>
+        <p><code>scripts/codex/install-global-git-hooks.sh</code> 会设置 <code>git config --global core.hooksPath</code>。这会影响所有仓库。除非你明确希望全局接管 hooks，否则更推荐把相同逻辑改成项目级 pre-commit、CI 或手动验证命令。</p>
+      </div>
+      <div class="warning">
+        <h3>不要把 yolo profile 当日常默认</h3>
+        <p>ECC 的 security guide 强调审批边界：网络、unsandboxed shell、secret path、repo 外写入、部署和 workflow dispatch 都不应由模型最终拍板。Codex 日常默认应保持 <code>on-request</code> 和 <code>workspace-write</code>，高风险任务用更窄 sandbox。</p>
+      </div>
+      <div class="warning">
+        <h3>不要把 skills / hooks / MCP 当无害文本</h3>
+        <p>ECC 自己的 security guide 与 SECURITY.md 都把 agent 配置、hooks、MCP、skills、prompt 文件视为供应链面。安装别人给的 skill 前，应像审 npm package 一样审它是否读 secrets、发网络请求、改权限或引入隐藏指令。</p>
+      </div>
+      <div class="warning">
+        <h3>注意仓库内部文档漂移</h3>
+        <p>同一快照里，<code>.codex/AGENTS.md</code> 和 <code>.codex/config.toml</code> 仍描述多个默认 MCP，而 MCP policy 与 merge 脚本已经收缩为一个默认 connector。遇到冲突时，优先看当前脚本和 policy，再看 README 叙述。</p>
+      </div>
+    </section>
+
+    <section class="card" id="sources">
+      <h2>证据来源</h2>
+      <p>以下链接固定到本次分析使用的提交快照，便于后续复核。若仓库继续演化，请重新读取当前分支后再更新结论。</p>
+      <ul class="source-list">
+        <li><a href="https://github.com/affaan-m/ECC/tree/71d22d0a77b7e0684f4e51cba03749b788993cdb">源码快照：affaan-m/ECC@71d22d0</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/README.md#L43-L49">README：跨 harness 定位与 ECC 2.0 入口</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/README.md#L254-L341">README：不要叠加安装方法、低上下文路径与规则拷贝边界</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/README.md#L426-L473">README：skills/commands 使用入口与 multi-* 外部依赖说明</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/AGENTS.md#L125-L164">AGENTS.md：skills-first 与项目结构</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/.codex/AGENTS.md#L45-L102">.codex/AGENTS.md：Codex MCP、multi-agent、hook 差异与 sandbox 安全</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/.codex/config.toml#L17-L122">.codex/config.toml：approval、sandbox、profiles、agents 配置</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/.codex-plugin/README.md#L49-L63">Codex plugin README：plugin mode fragile 与 manual sync 建议</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/scripts/sync-ecc-to-codex.sh#L4-L12">sync-ecc-to-codex.sh：同步范围与 add-only 合并目标</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/scripts/codex/install-global-git-hooks.sh#L44-L65">install-global-git-hooks.sh：全局 hooksPath 行为</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/docs/MCP-CONNECTOR-POLICY.md#L1-L31">MCP Connector Policy：默认 connector 收缩与 opt-in 原则</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/the-longform-guide.md#L24-L33">Longform Guide：用 CLI/skills 替代常驻 MCP 的上下文优化</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/the-longform-guide.md#L254-L286">Longform Guide：sub-agent 上下文问题与阶段化编排</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/the-security-guide.md#L251-L360">Security Guide：least agency、审批、日志、内存和最低安全门槛</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/SECURITY.md#L52-L75">SECURITY.md：官方分发面和非官方包警告</a></li>
+        <li><a href="https://github.com/affaan-m/ECC/blob/71d22d0a77b7e0684f4e51cba03749b788993cdb/package.json#L323-L363">package.json：CLI bin、测试脚本和依赖</a></li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

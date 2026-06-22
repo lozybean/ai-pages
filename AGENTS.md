@@ -22,6 +22,14 @@ http://127.0.0.1:4173/ai-pages/
 
 The `/ai-pages/` base path intentionally mirrors the GitHub Pages project site path. Use `PAGES_BASE=/ npm run preview` only when testing root-hosted behavior.
 
+For public tunnels to the local preview, use `npx` to start Cloudflare Tunnel against the preview server:
+
+```bash
+npx --yes cloudflared tunnel --url http://127.0.0.1:4173
+```
+
+Share the resulting `trycloudflare.com` URL with the same `/ai-pages/...` path as the local preview page.
+
 ## Shared Navigation
 
 All pages should load the shared navigation assets:
