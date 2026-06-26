@@ -1,0 +1,1203 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DeerFlow 研究：Runtime 架构与调用链路</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+  <style>
+    .flow-svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      margin: 1rem 0 0;
+    }
+
+    .lane-title {
+      font-size: 13px;
+      font-weight: 700;
+      fill: #6f675f;
+    }
+
+    .node-title {
+      font-size: 15px;
+      font-weight: 700;
+      fill: #2f2923;
+    }
+
+    .node-subtitle {
+      font-size: 12px;
+      fill: #6f675f;
+    }
+
+    .middleware-list {
+      display: grid;
+      gap: 1rem;
+      margin: 1rem 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .middleware-list > li {
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+    }
+
+    .middleware-list h4 {
+      margin: 0 0 .35rem;
+      font-size: 1rem;
+    }
+
+    .middleware-list p {
+      margin: .35rem 0;
+    }
+
+    .middleware-list ul {
+      display: grid;
+      gap: .35rem;
+      margin: .65rem 0 0;
+      padding-left: 1.15rem;
+    }
+
+    .middleware-list ul li {
+      color: var(--muted);
+      font-size: .92rem;
+    }
+
+    .article-toc a.toc-child,
+    .article-toc-mobile-drawer__links a.toc-child {
+      margin-left: 16px;
+      padding-left: 18px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      position: relative;
+    }
+
+    .article-toc a.toc-child::before,
+    .article-toc-mobile-drawer__links a.toc-child::before {
+      content: "";
+      position: absolute;
+      left: 7px;
+      top: 50%;
+      width: 6px;
+      height: 1px;
+      background: var(--line);
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">DeerFlow Research · Runtime Architecture</div>
+      <h1>DeerFlow 研究：Runtime 架构与调用链路</h1>
+      <p class="intro">围绕 DeerFlow 的 Gateway、LangGraph 兼容 API、Run Runtime、Agent middleware、SSE 事件和状态存储，梳理一次对话在系统内部被创建、执行、流式返回和持久化的完整机制。</p>
+      <div class="meta">
+        <span class="tag">Gateway</span>
+        <span class="tag green">Run Runtime</span>
+        <span class="tag orange">LangGraph</span>
+        <span class="tag purple">Agent Middleware</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#mental-model">核心模型</a>
+      <a href="#components">组件地图</a>
+      <a href="#gateway-boundary">API 设计</a>
+      <a class="toc-child" href="#langgraph-api">LangGraph 兼容 API</a>
+      <a class="toc-child" href="#deerflow-api">DeerFlow 应用 API</a>
+      <a href="#request-flow">端到端运行链路</a>
+      <a class="toc-child" href="#component-flow">组件流动</a>
+      <a class="toc-child" href="#user-flow">用户侧视角</a>
+      <a class="toc-child" href="#chunk-flow">chunk 侧视角</a>
+      <a href="#run-lifecycle">Run 生命周期</a>
+      <a class="toc-child" href="#run-state-machine">Run 状态轮转</a>
+      <a class="toc-child" href="#run-components">Run Runtime 组件</a>
+      <a class="toc-child" href="#run-coordination">Run 协作链路</a>
+      <a href="#agent-pipeline">Agent 管线</a>
+      <a class="toc-child" href="#agent-middleware-matrix">Middleware 切面</a>
+      <a href="#streaming">流式事件与状态同步</a>
+      <a class="toc-child" href="#message-types">messages 类型</a>
+      <a class="toc-child" href="#thread-state">ThreadState 字段</a>
+      <a href="#runtime-consistency">运行一致性</a>
+      <a href="#memory-management">记忆管理</a>
+      <a href="#reading">源码阅读路径</a>
+    </nav>
+
+    <section class="summary" id="mental-model">
+      <h2>核心模型</h2>
+      <p>DeerFlow 可以理解成一个部署在 Gateway 内部的 LangGraph Agent Runtime。外部看到的是兼容 LangGraph Platform 的 HTTP/SSE 接口；内部真正工作的，是 Gateway 路由、RunManager、StreamBridge、worker、Agent factory、中间件链、模型与工具系统、checkpointer 和记忆队列。这里的 LangGraph Server 更像一套可兼容的协议和工具入口；默认服务路径并不是把请求转发给一个独立的 LangGraph Server 进程。</p>
+      <p>这套结构的关键价值是把“对话”拆成了几个明确边界：HTTP 入口只负责协议和权限，Run 层负责生命周期和流式事件，Agent 层负责模型与工具推理，Middleware 层负责把线程上下文、文件空间、标题、token、记忆等横切能力挂到同一条执行链上。</p>
+    </section>
+
+    <section class="section" id="components">
+      <h2>组件地图</h2>
+      <p>从组件关系看，DeerFlow 不是一个单纯的聊天接口，而是“Gateway + 嵌入式 Agent harness”。Nginx 和前端只是入口形态；核心运行时在 Gateway 进程内完成。</p>
+      <svg class="flow-svg" viewBox="0 0 980 520" role="img" aria-label="DeerFlow Runtime 组件图，展示 Client、Nginx、Gateway、Run Runtime、Agent Runtime、状态存储和记忆队列之间的关系">
+        <defs>
+          <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+
+        <rect x="20" y="25" width="940" height="92" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="40" y="50" class="lane-title">入口层</text>
+        <rect x="55" y="62" width="150" height="38" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="130" y="86" text-anchor="middle" class="node-title">Web UI / API Client</text>
+        <rect x="285" y="62" width="150" height="38" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="360" y="86" text-anchor="middle" class="node-title">Nginx Proxy</text>
+        <rect x="515" y="62" width="170" height="38" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="600" y="86" text-anchor="middle" class="node-title">Gateway Routers</text>
+        <rect x="765" y="62" width="150" height="38" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="840" y="86" text-anchor="middle" class="node-title">Auth / Config</text>
+
+        <rect x="20" y="150" width="940" height="132" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="40" y="175" class="lane-title">Run Runtime</text>
+        <rect x="70" y="195" width="155" height="54" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="148" y="218" text-anchor="middle" class="node-title">Run Service</text>
+        <text x="148" y="237" text-anchor="middle" class="node-subtitle">normalize input/config</text>
+        <rect x="305" y="195" width="155" height="54" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="383" y="218" text-anchor="middle" class="node-title">RunManager</text>
+        <text x="383" y="237" text-anchor="middle" class="node-subtitle">status + records</text>
+        <rect x="540" y="195" width="155" height="54" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="618" y="218" text-anchor="middle" class="node-title">StreamBridge</text>
+        <text x="618" y="237" text-anchor="middle" class="node-subtitle">event queue</text>
+        <rect x="775" y="195" width="135" height="54" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="842" y="218" text-anchor="middle" class="node-title">Worker</text>
+        <text x="842" y="237" text-anchor="middle" class="node-subtitle">agent.astream</text>
+
+        <rect x="20" y="315" width="940" height="155" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="40" y="340" class="lane-title">Agent Runtime</text>
+        <rect x="55" y="365" width="150" height="58" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+        <text x="130" y="389" text-anchor="middle" class="node-title">Agent Factory</text>
+        <text x="130" y="408" text-anchor="middle" class="node-subtitle">model + tools</text>
+        <rect x="265" y="365" width="180" height="58" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+        <text x="355" y="389" text-anchor="middle" class="node-title">Middleware Chain</text>
+        <text x="355" y="408" text-anchor="middle" class="node-subtitle">context / title / memory</text>
+        <rect x="505" y="365" width="155" height="58" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="583" y="389" text-anchor="middle" class="node-title">Model + Tools</text>
+        <text x="583" y="408" text-anchor="middle" class="node-subtitle">LLM loop</text>
+        <rect x="720" y="350" width="185" height="42" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="812" y="377" text-anchor="middle" class="node-title">Checkpointer / Store</text>
+        <rect x="720" y="410" width="185" height="42" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="812" y="437" text-anchor="middle" class="node-title">Memory Queue</text>
+
+        <line x1="205" y1="81" x2="285" y2="81" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow)"></line>
+        <line x1="435" y1="81" x2="515" y2="81" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow)"></line>
+        <line x1="685" y1="81" x2="765" y2="81" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow)"></line>
+        <path d="M600 100 V145 H148 V195" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow)"></path>
+        <line x1="225" y1="222" x2="305" y2="222" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow)"></line>
+        <line x1="460" y1="222" x2="540" y2="222" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow)"></line>
+        <line x1="695" y1="222" x2="775" y2="222" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow)"></line>
+        <path d="M842 249 V300 H130 V365" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow)"></path>
+        <line x1="205" y1="394" x2="265" y2="394" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow)"></line>
+        <line x1="445" y1="394" x2="505" y2="394" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow)"></line>
+        <path d="M660 394 H700 V371 H720" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow)"></path>
+        <path d="M660 394 H700 V431 H720" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow)"></path>
+      </svg>
+    </section>
+
+    <section class="card" id="gateway-boundary">
+      <h2>API 设计</h2>
+      <p>DeerFlow 的 Gateway 不是单纯的反向代理，而是同时承载两类 API 面：一类是面向 LangGraph SDK / 前端 useStream 的兼容协议，负责 thread、run、stream、state、history 等运行时交互；另一类是 DeerFlow 产品能力 API，负责模型、MCP、skills、memory、uploads、artifacts、channels 等应用级能力。</p>
+
+      <h3 id="langgraph-api">LangGraph 兼容 API</h3>
+      <p>默认部署里，外部常见入口是 <code>/api/langgraph/*</code>。这组路径会被入口层重写到 Gateway 的原生 <code>/api/*</code> router，由 Gateway 进程内的 embedded runtime 创建 run、连接 StreamBridge、驱动 Agent，并按 LangGraph 客户端可识别的事件形状输出。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>API 组</th>
+            <th>主要职责</th>
+            <th>调用方视角</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Assistants</td>
+            <td><code>/api/assistants</code> 兼容 LangGraph assistant 查询、graph 信息和 schema 信息。</td>
+            <td>客户端可以发现当前可运行的 graph 入口，以及输入、输出、config schema。</td>
+          </tr>
+          <tr>
+            <td>Threads</td>
+            <td><code>/api/threads</code> 负责创建、查询、更新、删除 thread，并读取 state、history 等会话状态。</td>
+            <td>前端把 thread 理解为一次可持续对话的容器，而不是单次请求。</td>
+          </tr>
+          <tr>
+            <td>Thread Runs</td>
+            <td><code>/api/threads/{thread_id}/runs</code> 负责在线程内创建 run、等待 run、取消 run、join run、读取 run 消息、事件和 token usage。</td>
+            <td>客户端可以围绕一个 thread 连续发起多轮 run，并把每轮输出归到同一个会话上下文里。</td>
+          </tr>
+          <tr>
+            <td>Runs</td>
+            <td><code>/api/runs/stream</code>、<code>/api/runs/wait</code> 等 stateless run 入口提供不强依赖既有 thread 的运行方式。</td>
+            <td>适合一次性执行、调试或由调用方自己管理上下文的场景。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="deerflow-api">DeerFlow 应用 API</h3>
+      <p>应用 API 不追求被通用 LangGraph 客户端直接理解，主要给 DeerFlow 的前端设置页、管理界面、外部集成和 channel 内部命令使用。Agent runtime 通常不会在执行过程中再通过 HTTP 调用这些 API；它读取的是同一套底层配置、storage、缓存或运行时服务。也就是说，应用 API 是“管理和观测入口”，底层资源才是 Agent 真正消费的运行时依赖。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>API 组</th>
+            <th>主要调用方</th>
+            <th>对运行时的影响</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Models / MCP</td>
+            <td>前端模型配置页、MCP 管理页、外部管理工具。</td>
+            <td>写入或展示模型与工具配置；run 创建后由 runtime config 和 tool registry 消费。</td>
+          </tr>
+          <tr>
+            <td>Skills</td>
+            <td>前端 skill 管理页、skill 安装/编辑流程、Agent 自演进工具的外部管理面。</td>
+            <td>读写 skill storage，并刷新 prompt 注入缓存；Agent 构建 prompt 和 tool policy 时直接从 storage/config 读取 enabled skills。</td>
+          </tr>
+          <tr>
+            <td>Memory</td>
+            <td>前端记忆管理页、IM/channel 内部命令、导入/清理/人工修正流程。</td>
+            <td>读写 memory storage；Agent prompt 注入时通过 memory updater/storage 读取并格式化，不是调用 <code>/api/memory</code>。</td>
+          </tr>
+          <tr>
+            <td>Uploads / Artifacts</td>
+            <td>前端文件上传、产物预览/下载、channel 文件接入。</td>
+            <td>uploads 进入线程文件空间；artifacts 来自 Agent 工具产出，并被前端按文件或结果产物渲染。</td>
+          </tr>
+          <tr>
+            <td>Agents / Suggestions</td>
+            <td>前端 Agent 选择、配置页、输入框建议和快捷任务入口。</td>
+            <td>影响用户如何发起任务，以及 run 初始化时选择哪类 Agent 配置、提示词和能力面。</td>
+          </tr>
+          <tr>
+            <td>Channels / Auth / Feedback</td>
+            <td>登录初始化、IM 集成、channel worker、反馈入口和运维界面。</td>
+            <td>负责运行时之外的接入、权限、运行状态和体验闭环；channel 可以代表外部用户触发 run。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section" id="request-flow">
+      <h2>端到端运行链路</h2>
+      <p>一次对话不是普通请求响应，而是一条跨越入口、运行时、Agent、事件队列和前端渲染的端到端链路。可以从三条线同时理解：组件之间如何接力，用户界面如何变化，以及一个流式 chunk 如何从 Agent 内部抵达浏览器。</p>
+
+      <h3 id="component-flow">组件流动</h3>
+      <p>组件流动关注“请求被谁接住、交给谁、再由谁继续推进”。这条线能帮助定位问题边界：是入口代理、Gateway 适配、Run 生命周期、Agent 执行，还是 SSE 输出。</p>
+      <svg class="flow-svg" viewBox="0 0 980 430" role="img" aria-label="端到端组件流动图，展示入口、Gateway、Run Runtime、Agent Runtime 和前端消费之间的边界">
+        <defs>
+          <marker id="arrow4" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+
+        <rect x="25" y="30" width="930" height="76" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="45" y="58" class="lane-title">入口与协议层</text>
+        <rect x="70" y="58" width="145" height="34" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="142" y="80" text-anchor="middle" class="node-title">Client / SDK</text>
+        <rect x="265" y="58" width="145" height="34" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="337" y="80" text-anchor="middle" class="node-title">Nginx</text>
+        <rect x="460" y="58" width="165" height="34" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="542" y="80" text-anchor="middle" class="node-title">Gateway Router</text>
+        <rect x="720" y="58" width="170" height="34" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="805" y="80" text-anchor="middle" class="node-title">Auth / Config</text>
+
+        <rect x="25" y="138" width="930" height="92" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="45" y="166" class="lane-title">Gateway 到 Run Runtime</text>
+        <rect x="80" y="175" width="165" height="36" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="162" y="198" text-anchor="middle" class="node-title">Run Service</text>
+        <rect x="315" y="175" width="165" height="36" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="397" y="198" text-anchor="middle" class="node-title">RunManager</text>
+        <rect x="550" y="175" width="165" height="36" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="632" y="198" text-anchor="middle" class="node-title">RunRecord</text>
+
+        <rect x="25" y="262" width="930" height="104" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="45" y="290" class="lane-title">Agent 执行与事件桥</text>
+        <rect x="80" y="304" width="150" height="42" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+        <text x="155" y="330" text-anchor="middle" class="node-title">Worker</text>
+        <rect x="300" y="304" width="165" height="42" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+        <text x="382" y="330" text-anchor="middle" class="node-title">Agent Runtime</text>
+        <rect x="535" y="304" width="165" height="42" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="617" y="330" text-anchor="middle" class="node-title">StreamBridge</text>
+        <rect x="770" y="304" width="145" height="42" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="842" y="330" text-anchor="middle" class="node-title">SSE consumer</text>
+
+        <line x1="215" y1="75" x2="265" y2="75" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow4)"></line>
+        <line x1="410" y1="75" x2="460" y2="75" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow4)"></line>
+        <line x1="625" y1="75" x2="720" y2="75" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow4)"></line>
+        <path d="M542 92 V126 H162 V175" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow4)"></path>
+        <line x1="245" y1="193" x2="315" y2="193" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow4)"></line>
+        <line x1="480" y1="193" x2="550" y2="193" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow4)"></line>
+        <path d="M632 211 V248 H155 V304" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow4)"></path>
+        <line x1="230" y1="325" x2="300" y2="325" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow4)"></line>
+        <line x1="465" y1="325" x2="535" y2="325" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow4)"></line>
+        <line x1="700" y1="325" x2="770" y2="325" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow4)"></line>
+        <path d="M842 304 V244 H142 V92" fill="none" stroke="#76527f" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow4)"></path>
+
+        <rect x="70" y="382" width="205" height="32" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="172" y="403" text-anchor="middle" class="node-subtitle">协议适配：路径、权限、配置</text>
+        <rect x="330" y="382" width="205" height="32" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="432" y="403" text-anchor="middle" class="node-subtitle">生命周期：记录、并发、状态</text>
+        <rect x="590" y="382" width="250" height="32" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="715" y="403" text-anchor="middle" class="node-subtitle">流式边界：事件队列与 SSE 消费</text>
+      </svg>
+      <p>图里的实线是执行推进方向，虚线是流式结果返回方向。Gateway router 和 Run Service 是协议适配边界；RunManager 和 RunRecord 是生命周期边界；Worker 和 Agent Runtime 是执行边界；StreamBridge 把 Agent 事件生产和 SSE 消费拆开。</p>
+
+      <h3 id="user-flow">用户侧视角</h3>
+      <p>用户侧看到的是另一条时间线：页面不关心内部哪个类在运行，而关心会话是否创建、输入框是否忙、回答是否开始出现、工具状态是否可见、最终是否恢复可输入。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>用户看到的变化</th>
+            <th>背后的运行时动作</th>
+            <th>对应事件或状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>发送消息后，输入框进入 busy/streaming。</td>
+            <td>前端提交 run，请求里带上 human message、stream 配置、mode/context 等运行参数。</td>
+            <td>前端本地 optimistic message + run submit。</td>
+          </tr>
+          <tr>
+            <td>新会话 URL 和侧边栏项变成真实 thread。</td>
+            <td>Worker 启动后先发布 run/thread 元数据，前端记录真实身份。</td>
+            <td><code>metadata</code></td>
+          </tr>
+          <tr>
+            <td>回答开始出现，并逐步变长。</td>
+            <td>模型或工具链路持续产生 message chunk，SDK 合并成当前最新的 <code>thread.messages</code>。</td>
+            <td><code>messages</code></td>
+          </tr>
+          <tr>
+            <td>标题、TodoList、artifact 入口等外围状态变化。</td>
+            <td>图状态被 checkpoint/channel values 更新，前端把最新 <code>ThreadState</code> 合并到 <code>thread.values</code>。</td>
+            <td><code>values</code></td>
+          </tr>
+          <tr>
+            <td>工具步骤、子任务卡片、文件列表或澄清块出现。</td>
+            <td>前端根据 <code>AIMessage.tool_calls</code>、<code>ToolMessage</code> 和工具名做 message grouping。</td>
+            <td><code>messages</code> + 前端分组逻辑</td>
+          </tr>
+          <tr>
+            <td>回答结束，输入框恢复 ready。</td>
+            <td>Worker 完成收尾，StreamBridge 发布结束信号，SDK 进入 finish 路径并刷新相关缓存。</td>
+            <td><code>end</code></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="chunk-flow">chunk 侧视角</h3>
+      <p>chunk 侧视角适合理解“打字机观感”从哪里来。前端通常不是拿完整答案做字符级 diff 再定时打印，而是不断收到新的 message/state 事件，SDK 合并成当前完整内容，React 按最新内容重渲染。</p>
+      <svg class="flow-svg" viewBox="0 0 980 330" role="img" aria-label="chunk 从 LangGraph 到前端渲染的流程图，突出 StreamBridge 解耦生产者和消费者">
+        <defs>
+          <marker id="arrow3" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+
+        <rect x="30" y="58" width="145" height="74" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+        <text x="102" y="84" text-anchor="middle" class="node-title">LangGraph</text>
+        <text x="102" y="105" text-anchor="middle" class="node-subtitle">agent.astream()</text>
+        <text x="102" y="123" text-anchor="middle" class="node-subtitle">messages / values</text>
+
+        <rect x="220" y="58" width="145" height="74" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="292" y="84" text-anchor="middle" class="node-title">Worker</text>
+        <text x="292" y="105" text-anchor="middle" class="node-subtitle">serialize chunk</text>
+        <text x="292" y="123" text-anchor="middle" class="node-subtitle">publish(event)</text>
+
+        <rect x="420" y="34" width="185" height="122" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="512" y="60" text-anchor="middle" class="node-title">StreamBridge</text>
+        <text x="512" y="82" text-anchor="middle" class="node-subtitle">per-run event log</text>
+        <rect x="450" y="96" width="36" height="28" rx="6" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <rect x="493" y="96" width="36" height="28" rx="6" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <rect x="536" y="96" width="36" height="28" rx="6" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="468" y="115" text-anchor="middle" class="node-subtitle">id</text>
+        <text x="511" y="115" text-anchor="middle" class="node-subtitle">id</text>
+        <text x="554" y="115" text-anchor="middle" class="node-subtitle">id</text>
+        <text x="512" y="144" text-anchor="middle" class="node-subtitle">notify subscriber / replay</text>
+
+        <rect x="660" y="58" width="145" height="74" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="732" y="84" text-anchor="middle" class="node-title">SSE consumer</text>
+        <text x="732" y="105" text-anchor="middle" class="node-subtitle">subscribe(run)</text>
+        <text x="732" y="123" text-anchor="middle" class="node-subtitle">format frame</text>
+
+        <rect x="835" y="58" width="115" height="74" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="892" y="84" text-anchor="middle" class="node-title">Browser</text>
+        <text x="892" y="105" text-anchor="middle" class="node-subtitle">SDK merge</text>
+        <text x="892" y="123" text-anchor="middle" class="node-subtitle">React render</text>
+
+        <line x1="175" y1="95" x2="220" y2="95" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow3)"></line>
+        <line x1="365" y1="95" x2="420" y2="95" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow3)"></line>
+        <line x1="605" y1="95" x2="660" y2="95" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow3)"></line>
+        <line x1="805" y1="95" x2="835" y2="95" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow3)"></line>
+
+        <path d="M735 132 V200 H520 V158" fill="none" stroke="#76527f" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow3)"></path>
+        <text x="635" y="194" text-anchor="middle" class="node-subtitle">Last-Event-ID reconnect</text>
+
+        <rect x="70" y="235" width="250" height="54" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="195" y="258" text-anchor="middle" class="node-title">生产者节奏</text>
+        <text x="195" y="278" text-anchor="middle" class="node-subtitle">LLM / LangGraph chunk 粒度</text>
+
+        <rect x="365" y="235" width="250" height="54" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="490" y="258" text-anchor="middle" class="node-title">解耦边界</text>
+        <text x="490" y="278" text-anchor="middle" class="node-subtitle">排队、唤醒、重连 replay、延迟清理</text>
+
+        <rect x="660" y="235" width="250" height="54" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="785" y="258" text-anchor="middle" class="node-title">消费者节奏</text>
+        <text x="785" y="278" text-anchor="middle" class="node-subtitle">SSE 读取、SDK 合并、React 重渲染</text>
+
+        <line x1="195" y1="235" x2="292" y2="132" stroke="#d9c6b1" stroke-width="1.5" stroke-dasharray="4 5"></line>
+        <line x1="490" y1="235" x2="512" y2="156" stroke="#d9c6b1" stroke-width="1.5" stroke-dasharray="4 5"></line>
+        <line x1="785" y1="235" x2="892" y2="132" stroke="#d9c6b1" stroke-width="1.5" stroke-dasharray="4 5"></line>
+      </svg>
+      <p>这张图的关键点是：Worker 和 SSE consumer 并不直接互相等待。Worker 只负责把 chunk 变成事件并发布；StreamBridge 保留 per-run 事件日志、唤醒消费者，并支持基于事件 id 的重连 replay；前端看到的“打字机”来自 SDK 合并后的内容不断变长，而不是 StreamBridge 主动拆字。</p>
+    </section>
+
+    <section class="card" id="run-lifecycle">
+      <h2>Run 生命周期</h2>
+      <p>Run 层的核心职责是把“不确定的 Agent 执行”变成“可管理的后台任务”。它不负责模型怎么想，而负责让这个过程能被创建、取消、回滚、观察、持久化和流式消费。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>阶段</th>
+            <th>内部动作</th>
+            <th>对系统的意义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>创建</td>
+            <td>生成 RunRecord，绑定 thread、assistant、metadata、model_name、断连策略。</td>
+            <td>让一次执行有稳定身份，便于查询、取消和审计。</td>
+          </tr>
+          <tr>
+            <td>启动</td>
+            <td>状态置为 running，捕获 pre-run checkpoint，发布 metadata。</td>
+            <td>客户端能立即知道 run/thread 身份，系统也保留回滚基础。</td>
+          </tr>
+          <tr>
+            <td>执行</td>
+            <td>构造 runtime context、agent、checkpointer、store、callbacks，再进入 LangGraph stream。</td>
+            <td>把 HTTP 请求切换为可持续推进的图执行。</td>
+          </tr>
+          <tr>
+            <td>结束</td>
+            <td>根据执行结果设置 success/error/interrupted，刷新 journal，持久化 token 与完成信息。</td>
+            <td>让 run 结果和可观测数据落到统一位置。</td>
+          </tr>
+          <tr>
+            <td>收尾</td>
+            <td>同步标题到 thread display name，更新 thread 状态，发布 end，延迟清理 stream queue。</td>
+            <td>让 UI 列表、历史记录和长连接生命周期保持一致。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="run-state-machine">Run 状态轮转</h3>
+      <svg class="flow-svg" viewBox="0 0 980 360" role="img" aria-label="Run 状态轮转图，展示 pending、running、success、error、interrupted 之间的状态变化，以及重试会创建新的 run">
+        <defs>
+          <marker id="arrow6" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+
+        <rect x="35" y="54" width="150" height="58" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="110" y="78" text-anchor="middle" class="node-title">Create request</text>
+        <text x="110" y="98" text-anchor="middle" class="node-subtitle">POST /runs</text>
+
+        <rect x="245" y="54" width="150" height="58" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="320" y="78" text-anchor="middle" class="node-title">pending</text>
+        <text x="320" y="98" text-anchor="middle" class="node-subtitle">RunRecord 已创建</text>
+
+        <rect x="455" y="54" width="150" height="58" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="530" y="78" text-anchor="middle" class="node-title">running</text>
+        <text x="530" y="98" text-anchor="middle" class="node-subtitle">Worker 推进 Agent</text>
+
+        <rect x="730" y="25" width="165" height="54" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+        <text x="812" y="48" text-anchor="middle" class="node-title">success</text>
+        <text x="812" y="66" text-anchor="middle" class="node-subtitle">正常完成</text>
+
+        <rect x="730" y="116" width="165" height="62" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+        <text x="812" y="139" text-anchor="middle" class="node-title">error</text>
+        <text x="812" y="157" text-anchor="middle" class="node-subtitle">异常 / rollback</text>
+        <text x="812" y="172" text-anchor="middle" class="node-subtitle">LLM fallback</text>
+
+        <rect x="730" y="207" width="165" height="54" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="812" y="230" text-anchor="middle" class="node-title">interrupted</text>
+        <text x="812" y="248" text-anchor="middle" class="node-subtitle">cancel interrupt</text>
+
+        <rect x="245" y="282" width="360" height="50" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="425" y="304" text-anchor="middle" class="node-title">用户重试 / 再次提交</text>
+        <text x="425" y="322" text-anchor="middle" class="node-subtitle">同一 thread 下创建新的 run_id；旧 run 保持终态</text>
+
+        <line x1="185" y1="83" x2="245" y2="83" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow6)"></line>
+        <line x1="395" y1="83" x2="455" y2="83" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow6)"></line>
+        <path d="M605 83 H680 V52 H730" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow6)"></path>
+        <path d="M605 83 H680 V143 H730" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow6)"></path>
+        <path d="M530 112 V234 H730" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow6)"></path>
+        <path d="M320 112 V234 H730" fill="none" stroke="#8a5a35" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow6)"></path>
+
+        <path d="M812 178 V307 H605" fill="none" stroke="#596f86" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow6)"></path>
+        <path d="M812 261 V307 H605" fill="none" stroke="#596f86" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow6)"></path>
+        <path d="M245 307 H110 V112" fill="none" stroke="#596f86" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow6)"></path>
+
+        <text x="660" y="45" class="node-subtitle">完成</text>
+        <text x="650" y="135" class="node-subtitle">异常</text>
+        <text x="590" y="226" class="node-subtitle">取消</text>
+        <text x="150" y="290" class="node-subtitle">不是原 run 复活</text>
+      </svg>
+      <p>从状态机看，<code>pending</code>、<code>running</code> 是活跃态；<code>success</code>、<code>error</code>、<code>interrupted</code> 是终态。失败或异常后可以在同一个 thread 上再次发起执行，但那会创建新的 <code>RunRecord</code> 和新的 <code>run_id</code>；旧 run 不会从 <code>error</code> 回到 <code>pending</code> 或 <code>running</code>。代码里的短重试主要用于持久化写入、模型 provider 等内部细节，不等同于 run 级别的原地重跑。</p>
+
+      <h3 id="run-components">Run Runtime 组件</h3>
+      <p>Run Runtime 不是一个单点模块，而是一组边界清楚的协作组件。它们把 Gateway 收到的一次 run 请求拆成四件事：创建可追踪记录、启动后台执行、把执行事件交给 SSE 消费端、在结束时同步状态和清理资源。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>组件</th>
+            <th>位置</th>
+            <th>核心职责</th>
+            <th>边界判断</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Run Service</td>
+            <td>Gateway service 层</td>
+            <td>读取 Gateway 单例依赖，校验 thread 权限和模型 allowlist，处理 <code>on_disconnect</code>、<code>context</code>、<code>metadata</code>、<code>stream_mode</code>，创建 run 记录并启动后台任务。</td>
+            <td>它是 HTTP 协议到 runtime 的适配层，不直接执行模型，也不直接决定 LangGraph 节点如何流转。</td>
+          </tr>
+          <tr>
+            <td>RunManager</td>
+            <td>runtime/runs</td>
+            <td>维护 <code>RunRecord</code>、run 状态、thread 维度索引、并发策略、取消/中断信号，以及可选的 RunStore 持久化。</td>
+            <td>它关心“run 是否存在、能否启动、现在是什么状态”，不关心 chunk 内容如何渲染。</td>
+          </tr>
+          <tr>
+            <td>RunRecord</td>
+            <td>runtime/runs</td>
+            <td>承载一次执行的稳定身份和运行元数据，包括 <code>run_id</code>、<code>thread_id</code>、assistant、status、metadata、kwargs、task、abort event、model_name、user_id 等。</td>
+            <td>它是 run 生命周期的事实载体；HTTP response、取消、wait、stream 和后台 worker 都围绕它协作。</td>
+          </tr>
+          <tr>
+            <td>StreamBridge</td>
+            <td>runtime/stream_bridge</td>
+            <td>提供 producer/consumer 队列接口：worker 通过 <code>publish</code> 写入事件，SSE consumer 通过 <code>subscribe</code> 读取事件，同时支持 heartbeat、end sentinel 和延迟 cleanup。</td>
+            <td>它只负责事件传递和长连接解耦，不理解 message、tool、artifact 的产品语义。</td>
+          </tr>
+          <tr>
+            <td>Worker</td>
+            <td>runtime/runs/worker.py</td>
+            <td>后台执行主体。它设置 run 状态，捕获 pre-run checkpoint，发布 metadata，构造 runtime context、agent、checkpointer、store 和 journal，调用 <code>agent.astream()</code> 并把 LangGraph chunk 转成 SSE 事件。</td>
+            <td>它是“真正推动 Agent 往前跑”的地方；但前端连接、权限校验和 HTTP response 生命周期仍由 Gateway/Service 层处理。</td>
+          </tr>
+          <tr>
+            <td>SSE consumer</td>
+            <td>Gateway service 层</td>
+            <td>订阅 StreamBridge，把内部 <code>StreamEvent</code> 格式化成 SSE frame，处理 heartbeat、end 和客户端断连。</td>
+            <td>它是事件消费者，不生成 Agent 内容；断连时只按 <code>on_disconnect</code> 策略决定取消或继续后台任务。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="run-coordination">Run 协作链路</h3>
+      <svg class="flow-svg" viewBox="0 0 980 450" role="img" aria-label="Run Runtime 协作流程图，展示 Run Service、RunManager、Worker、StreamBridge 和 SSE consumer 的协作链路">
+        <defs>
+          <marker id="arrow5" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+
+        <rect x="25" y="28" width="930" height="78" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="45" y="56" class="lane-title">创建与调度</text>
+        <rect x="160" y="48" width="135" height="42" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="228" y="73" text-anchor="middle" class="node-title">Run Service</text>
+        <rect x="360" y="48" width="135" height="42" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="428" y="73" text-anchor="middle" class="node-title">RunManager</text>
+        <rect x="560" y="48" width="135" height="42" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="628" y="73" text-anchor="middle" class="node-title">RunRecord</text>
+        <rect x="760" y="48" width="135" height="42" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="828" y="73" text-anchor="middle" class="node-title">Worker task</text>
+        <line x1="295" y1="69" x2="360" y2="69" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow5)"></line>
+        <line x1="495" y1="69" x2="560" y2="69" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow5)"></line>
+        <line x1="695" y1="69" x2="760" y2="69" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow5)"></line>
+        <text x="92" y="76" class="node-subtitle">HTTP run request</text>
+        <line x1="105" y1="69" x2="160" y2="69" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow5)"></line>
+
+        <rect x="25" y="142" width="930" height="96" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="45" y="170" class="lane-title">后台执行</text>
+        <rect x="95" y="178" width="145" height="42" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="168" y="203" text-anchor="middle" class="node-title">Worker</text>
+        <rect x="305" y="178" width="150" height="42" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="380" y="203" text-anchor="middle" class="node-title">Runtime Context</text>
+        <rect x="520" y="178" width="150" height="42" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="595" y="203" text-anchor="middle" class="node-title">Agent astream</text>
+        <rect x="735" y="178" width="150" height="42" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="810" y="203" text-anchor="middle" class="node-title">LangGraph chunk</text>
+        <line x1="240" y1="199" x2="305" y2="199" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow5)"></line>
+        <line x1="455" y1="199" x2="520" y2="199" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow5)"></line>
+        <line x1="670" y1="199" x2="735" y2="199" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow5)"></line>
+        <path d="M828 90 V128 H168 V178" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow5)"></path>
+        <text x="500" y="130" text-anchor="middle" class="node-subtitle">asyncio.create_task 后，HTTP 层不阻塞等待 Agent 完成</text>
+
+        <rect x="25" y="274" width="930" height="132" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="45" y="302" class="lane-title">流式输出与收尾</text>
+        <rect x="95" y="322" width="150" height="42" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="170" y="347" text-anchor="middle" class="node-title">StreamBridge</text>
+        <rect x="315" y="322" width="150" height="42" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="390" y="347" text-anchor="middle" class="node-title">SSE consumer</text>
+        <rect x="535" y="322" width="150" height="42" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="610" y="347" text-anchor="middle" class="node-title">Browser SDK</text>
+        <rect x="755" y="322" width="150" height="42" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="830" y="347" text-anchor="middle" class="node-title">Run finalizer</text>
+        <path d="M810 220 V254 H170 V322" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow5)"></path>
+        <line x1="245" y1="343" x2="315" y2="343" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow5)"></line>
+        <line x1="465" y1="343" x2="535" y2="343" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow5)"></line>
+        <path d="M810 220 V322" fill="none" stroke="#9f4d3f" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow5)"></path>
+        <text x="845" y="272" text-anchor="middle" class="node-subtitle">success / error</text>
+        <text x="845" y="291" text-anchor="middle" class="node-subtitle">cancel / rollback</text>
+
+        <rect x="75" y="394" width="210" height="40" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+        <text x="180" y="411" text-anchor="middle" class="node-subtitle">publish events</text>
+        <text x="180" y="427" text-anchor="middle" class="node-subtitle">metadata / values / messages / end</text>
+        <rect x="320" y="394" width="200" height="40" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+        <text x="420" y="411" text-anchor="middle" class="node-subtitle">heartbeat</text>
+        <text x="420" y="427" text-anchor="middle" class="node-subtitle">disconnect policy</text>
+        <rect x="555" y="394" width="160" height="40" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="635" y="411" text-anchor="middle" class="node-subtitle">SDK merge</text>
+        <text x="635" y="427" text-anchor="middle" class="node-subtitle">render</text>
+        <rect x="755" y="394" width="165" height="40" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="838" y="411" text-anchor="middle" class="node-subtitle">journal / title</text>
+        <text x="838" y="427" text-anchor="middle" class="node-subtitle">cleanup</text>
+      </svg>
+      <p>这条链路的核心是“创建”和“执行”分离：Run Service 负责把 HTTP 请求规范化成 <code>RunRecord</code> 并启动后台 task；Worker 负责推进 Agent；StreamBridge 负责把 chunk 转成可订阅事件；SSE consumer 只负责把事件送到浏览器。结束时再由 Worker 统一更新状态、刷新 journal、同步 thread 信息并发布 <code>end</code>。</p>
+    </section>
+
+    <section class="section" id="agent-pipeline">
+      <h2>Agent 管线</h2>
+      <p>Agent Runtime 是 DeerFlow 最值得反复看的部分。它不是“系统提示 + 模型调用”这么简单，而是通过 middleware 把线程数据、上传文件、沙箱、工具错误、技能、总结、todo、token、标题、记忆、视觉输入、subagent 限流和澄清中断接入同一条执行链。</p>
+      <svg class="flow-svg" viewBox="0 0 980 260" role="img" aria-label="DeerFlow Agent 执行管线，从 state 进入中间件链，经过模型和工具循环，再回写 state">
+        <defs>
+          <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+        <rect x="30" y="92" width="120" height="58" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="90" y="116" text-anchor="middle" class="node-title">Thread State</text>
+        <text x="90" y="136" text-anchor="middle" class="node-subtitle">messages + context</text>
+
+        <rect x="200" y="45" width="160" height="58" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="280" y="69" text-anchor="middle" class="node-title">Before Agent</text>
+        <text x="280" y="89" text-anchor="middle" class="node-subtitle">thread data / uploads</text>
+
+        <rect x="410" y="45" width="160" height="58" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="490" y="69" text-anchor="middle" class="node-title">Before Model</text>
+        <text x="490" y="89" text-anchor="middle" class="node-subtitle">dynamic context / images</text>
+
+        <rect x="620" y="45" width="140" height="58" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+        <text x="690" y="69" text-anchor="middle" class="node-title">Model Call</text>
+        <text x="690" y="89" text-anchor="middle" class="node-subtitle">answer or tool calls</text>
+
+        <rect x="810" y="45" width="140" height="58" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="880" y="69" text-anchor="middle" class="node-title">After Model</text>
+        <text x="880" y="89" text-anchor="middle" class="node-subtitle">title / limits / loops</text>
+
+        <rect x="410" y="168" width="160" height="58" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="490" y="192" text-anchor="middle" class="node-title">Tools Node</text>
+        <text x="490" y="212" text-anchor="middle" class="node-subtitle">sandbox / MCP / task</text>
+
+        <rect x="720" y="168" width="170" height="58" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+        <text x="805" y="192" text-anchor="middle" class="node-title">After Agent</text>
+        <text x="805" y="212" text-anchor="middle" class="node-subtitle">token / memory / state</text>
+
+        <line x1="150" y1="121" x2="200" y2="74" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow2)"></line>
+        <line x1="360" y1="74" x2="410" y2="74" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow2)"></line>
+        <line x1="570" y1="74" x2="620" y2="74" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow2)"></line>
+        <line x1="760" y1="74" x2="810" y2="74" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow2)"></line>
+        <path d="M690 103 V132 H490 V168" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow2)"></path>
+        <path d="M570 197 H690 V103" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow2)"></path>
+        <path d="M880 103 V136 H805 V168" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow2)"></path>
+      </svg>
+
+      <h3 id="agent-middleware-matrix">Middleware 切面列表</h3>
+      <p>Lead Agent 的 middleware 不是无序插件，而是按运行时职责逐层挂载。下面按常见注册顺序展开：基础运行时 middleware 先处理 thread、sandbox、工具安全和错误；随后 lead-agent 专属 middleware 处理动态上下文、skills、摘要、todo、标题、记忆、视觉、延迟工具、subagent、循环检测、安全终止和澄清。</p>
+      <ol class="middleware-list">
+        <li>
+          <h4>01. <code>ToolOutputBudgetMiddleware</code></h4>
+          <p><strong>启用条件：</strong>默认。</p>
+          <p><strong>主要作用：</strong>控制工具输出预算，避免过大的 tool result 继续污染后续模型上下文。</p>
+          <ul>
+            <li><strong>Wrap Model：</strong>在模型绑定前处理工具输出预算相关的上下文约束。</li>
+            <li><strong>Wrap Tool：</strong>工具返回后压缩或裁剪结果，再交给后续消息链。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>02. <code>ThreadDataMiddleware</code></h4>
+          <p><strong>启用条件：</strong>默认。</p>
+          <p><strong>主要作用：</strong>建立 thread workspace、uploads、outputs 等线程工作区，并把线程运行元数据放入 state。</p>
+          <ul>
+            <li><strong>Before Agent：</strong>在 Agent 进入模型循环前准备线程目录、虚拟路径和 thread_data。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>03. <code>UploadsMiddleware</code></h4>
+          <p><strong>启用条件：</strong>Lead Agent 默认。</p>
+          <p><strong>主要作用：</strong>读取线程上传文件，生成可被模型理解的文件摘要、预览和引用上下文。</p>
+          <ul>
+            <li><strong>Before Agent：</strong>扫描当前 thread 的上传文件，并把上传文件信息合并进 state / 用户上下文。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>04. <code>SandboxMiddleware</code></h4>
+          <p><strong>启用条件：</strong>默认。</p>
+          <p><strong>主要作用：</strong>懒初始化 sandbox，给工具调用提供隔离环境，并在 Agent 收尾时处理沙箱状态。</p>
+          <ul>
+            <li><strong>Before Agent：</strong>按需准备 sandbox_id、工作目录和工具运行环境。</li>
+            <li><strong>Wrap Tool：</strong>在工具执行时注入 sandbox 上下文，让文件、命令、运行目录落在隔离空间内。</li>
+            <li><strong>After Agent：</strong>在执行结束后做沙箱状态回写或清理。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>05. <code>DanglingToolCallMiddleware</code></h4>
+          <p><strong>启用条件：</strong>默认。</p>
+          <p><strong>主要作用：</strong>修复历史消息里缺失的 <code>ToolMessage</code>，避免模型看到不完整的 tool call 对。</p>
+          <ul>
+            <li><strong>Wrap Model：</strong>在请求送入模型前补齐 dangling tool call 对应的占位工具消息。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>06. <code>LLMErrorHandlingMiddleware</code></h4>
+          <p><strong>启用条件：</strong>默认。</p>
+          <p><strong>主要作用：</strong>包裹模型调用，把 provider 异常转换成可恢复或可上报的失败形态。</p>
+          <ul>
+            <li><strong>Wrap Model：</strong>捕获模型调用异常，生成 fallback/error 结果，避免异常直接撕裂整条执行链。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>07. <code>GuardrailMiddleware</code></h4>
+          <p><strong>启用条件：</strong>guardrails 配置启用。</p>
+          <p><strong>主要作用：</strong>在工具执行前做策略评估，被拒绝的工具调用会变成错误 <code>ToolMessage</code>。</p>
+          <ul>
+            <li><strong>Wrap Tool：</strong>把 tool name、tool input、agent id 等组装成 guardrail request，决定放行或拦截。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>08. <code>SandboxAuditMiddleware</code></h4>
+          <p><strong>启用条件：</strong>默认。</p>
+          <p><strong>主要作用：</strong>审计高风险 sandbox/bash 类工具调用，负责安全记录与拦截前置判断。</p>
+          <ul>
+            <li><strong>Wrap Tool：</strong>在命令类工具执行前分析命令风险，并记录审计结果。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>09. <code>ToolErrorHandlingMiddleware</code></h4>
+          <p><strong>启用条件：</strong>默认。</p>
+          <p><strong>主要作用：</strong>捕获工具异常并转成错误 <code>ToolMessage</code>，同时给 <code>task</code> 工具补结构化 subagent 状态。</p>
+          <ul>
+            <li><strong>Wrap Tool：</strong>包裹真实工具执行，把异常、安全失败或 subagent 结束状态规范化成前端可识别的工具消息。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>10. <code>DynamicContextMiddleware</code></h4>
+          <p><strong>启用条件：</strong>Lead Agent 默认。</p>
+          <p><strong>主要作用：</strong>把当前日期、可选 memory 等动态上下文注入隐藏 reminder，保持静态 system prompt 稳定。</p>
+          <ul>
+            <li><strong>Before Agent：</strong>在 Agent 开始前读取运行时上下文和 memory，并把 reminder 写入消息附近。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>11. <code>SkillActivationMiddleware</code></h4>
+          <p><strong>启用条件：</strong>Lead Agent 默认。</p>
+          <p><strong>主要作用：</strong>处理用户显式 <code>/skill-name</code> 激活，在模型调用前注入对应 skill 内容。</p>
+          <ul>
+            <li><strong>Wrap Model：</strong>检查用户消息里的 slash skill 激活，读取 skill 文件并改写模型请求消息。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>12. <code>DeerFlowSummarizationMiddleware</code></h4>
+          <p><strong>启用条件：</strong>summarization 配置启用。</p>
+          <p><strong>主要作用：</strong>在模型调用前压缩长历史，并可在摘要前触发 memory flush hook。</p>
+          <ul>
+            <li><strong>Before Model：</strong>判断上下文是否达到摘要触发条件，生成摘要并裁剪历史消息。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>13. <code>TodoMiddleware</code></h4>
+          <p><strong>启用条件：</strong>plan mode 启用。</p>
+          <p><strong>主要作用：</strong>提供 todo 工具、维护待办状态，并在未完成任务时把控制权跳回模型继续执行。</p>
+          <ul>
+            <li><strong>Before Agent：</strong>清理上一轮遗留的完成提醒，准备本轮 todo 运行上下文。</li>
+            <li><strong>Before Model：</strong>把 todo 相关系统提示和状态整理给模型。</li>
+            <li><strong>Wrap Model：</strong>向模型请求追加隐藏的 todo 完成提醒。</li>
+            <li><strong>After Model：</strong>如果模型想结束但仍有未完成 todo，插入提醒并跳回 model。</li>
+            <li><strong>After Agent：</strong>清理当前 run 的 todo completion reminder。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>14. <code>TokenUsageMiddleware</code></h4>
+          <p><strong>启用条件：</strong>token usage 配置启用。</p>
+          <p><strong>主要作用：</strong>在模型返回后统计 token，并给 journal / run completion 写入调用归因。</p>
+          <ul>
+            <li><strong>After Model：</strong>读取模型响应里的 usage metadata，按 lead agent、subagent、middleware 归因。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>15. <code>TitleMiddleware</code></h4>
+          <p><strong>启用条件：</strong>Lead Agent 默认。</p>
+          <p><strong>主要作用：</strong>在首轮有效对话后生成 thread 标题，最终同步到 thread display name。</p>
+          <ul>
+            <li><strong>After Model：</strong>在模型产出后判断是否需要生成标题，并把结果写入 state。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>16. <code>MemoryMiddleware</code></h4>
+          <p><strong>启用条件：</strong>Lead Agent 默认挂载，按 memory 配置生效。</p>
+          <p><strong>主要作用：</strong>Agent 结束后把对话放入异步记忆更新队列；记忆注入本身由动态上下文阶段读取。</p>
+          <ul>
+            <li><strong>After Agent：</strong>提取本轮对话并排入 memory update 队列，不阻塞用户侧响应。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>17. <code>ViewImageMiddleware</code></h4>
+          <p><strong>启用条件：</strong>模型支持 vision 时启用。</p>
+          <p><strong>主要作用：</strong>把用户已查看图片整理成模型可见的视觉输入上下文。</p>
+          <ul>
+            <li><strong>Before Model：</strong>把 viewed_images 中的图片内容或描述注入模型请求。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>18. <code>DeferredToolFilterMiddleware</code></h4>
+          <p><strong>启用条件：</strong>tool_search / deferred MCP 工具存在。</p>
+          <p><strong>主要作用：</strong>隐藏未 promoted 的工具 schema，并阻止模型调用尚未通过 tool_search 暴露的工具。</p>
+          <ul>
+            <li><strong>Wrap Model：</strong>从 <code>request.tools</code> 中过滤未 promoted 的 deferred tools。</li>
+            <li><strong>Wrap Tool：</strong>如果模型直接调用仍处于 deferred 状态的工具，返回错误工具消息。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>19. <code>SubagentLimitMiddleware</code></h4>
+          <p><strong>启用条件：</strong>subagent_enabled 启用。</p>
+          <p><strong>主要作用：</strong>限制并发 <code>task</code> 工具调用数量，避免一次模型输出派发过多 subagent。</p>
+          <ul>
+            <li><strong>After Model：</strong>检查模型输出的 tool calls，裁剪或改写超过并发上限的 <code>task</code> 调用。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>20. <code>LoopDetectionMiddleware</code></h4>
+          <p><strong>启用条件：</strong>loop detection 配置启用。</p>
+          <p><strong>主要作用：</strong>检测重复工具调用或无效循环，必要时注入提醒并引导模型跳出循环。</p>
+          <ul>
+            <li><strong>Before Agent：</strong>清理其他 run 的遗留循环警告。</li>
+            <li><strong>Wrap Model：</strong>把上一步检测到的循环警告追加到本次模型请求。</li>
+            <li><strong>After Model：</strong>分析模型输出和工具调用模式，判断是否出现循环。</li>
+            <li><strong>After Agent：</strong>清理当前 run 的 pending warnings。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>21. <code>SafetyFinishReasonMiddleware</code></h4>
+          <p><strong>启用条件：</strong>safety finish 配置启用。</p>
+          <p><strong>主要作用：</strong>识别 provider safety termination，清理不应继续执行的 tool calls。</p>
+          <ul>
+            <li><strong>After Model：</strong>检查 finish reason / safety signal，必要时移除工具调用并注入安全说明。</li>
+          </ul>
+        </li>
+        <li>
+          <h4>22. <code>ClarificationMiddleware</code></h4>
+          <p><strong>启用条件：</strong>总是最后挂载。</p>
+          <p><strong>主要作用：</strong>拦截澄清工具调用，把 ask-clarification 转成可中断、可恢复的用户确认流程。</p>
+          <ul>
+            <li><strong>Wrap Tool：</strong>识别澄清工具，触发 interrupt / resume 语义，而不是把它当普通工具结果处理。</li>
+          </ul>
+        </li>
+      </ol>
+      <p>读这组列表时要注意两个方向：注册顺序影响同一切面的包裹关系；hook 切面决定它能改什么。比如 <code>before_agent</code> 更适合准备 state 和工作区，<code>wrap_model_call</code> 更适合改模型可见 messages/tools，<code>after_model</code> 更适合检查模型输出和决定是否跳回模型，<code>wrap_tool_call</code> 则是工具安全、错误转换和执行拦截的关键位置。</p>
+
+    </section>
+
+    <section class="card" id="streaming">
+      <h2>流式事件与状态同步</h2>
+      <p>DeerFlow 的流式输出可以理解为“worker 把 LangGraph stream mode 翻译成前端可消费事件”。前端并不是逐条把原始 SSE frame 画到屏幕上，而是通过 LangGraph SDK 的 <code>useStream</code> 把事件合并成 <code>thread.messages</code>、<code>thread.values</code>、loading 状态和回调事件，然后由消息分组逻辑决定具体 UI 形态。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>SSE 事件</th>
+            <th>进入前端后的状态</th>
+            <th>通常渲染成什么</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>metadata</code></td>
+            <td><code>useStream.onCreated(meta)</code> 拿到 <code>thread_id</code> 和 <code>run_id</code>，触发 <code>onStart</code>，同时把线程放进 sidebar/search cache，状态标成 busy。</td>
+            <td>新会话 URL 被替换成真实 thread 路径；标题区域先显示默认新会话标题；输入框进入 streaming/busy 状态。</td>
+          </tr>
+          <tr>
+            <td><code>values</code></td>
+            <td>合并到 <code>thread.values</code> 和 <code>thread.messages</code>。它是当前 DeerFlow <code>ThreadState</code> channel values 的最新快照，可能包含 <code>messages</code>、<code>title</code>、<code>todos</code>、<code>artifacts</code>、<code>thread_data</code>、<code>sandbox</code>、<code>uploaded_files</code>、<code>viewed_images</code>、<code>promoted</code> 等。</td>
+            <td>消息列表按最新 state 重排；<code>title</code> 更新侧边栏和顶部标题；<code>todos</code> 触发输入框上方的 TodoList；<code>artifacts</code> 影响右侧产物入口；其他字段主要服务工具、中间件和后续模型调用。</td>
+          </tr>
+          <tr>
+            <td><code>messages</code></td>
+            <td>客户端请求的 <code>messages-tuple</code> 在 worker 内部映射到 LangGraph <code>messages</code> mode，再由 SDK 合并成单条或多条 <code>AIMessage</code> / <code>ToolMessage</code>。</td>
+            <td>前端再按 message role、tool call 名称、tool result 和隐藏标记分组。普通回答、thinking、工具步骤、subagent、文件展示和澄清消息都来自这一类事件。</td>
+          </tr>
+          <tr>
+            <td><code>events</code> / LangChain callbacks</td>
+            <td>前端的 <code>onLangChainEvent</code> 会监听如 <code>on_tool_end</code> 这类事件；<code>onCustomEvent</code> 处理 <code>task_running</code>、<code>llm_retry</code> 等自定义事件。</td>
+            <td>tool end 可触发 artifact 或相关 query 刷新；<code>task_running</code> 更新子任务卡片最新消息；<code>llm_retry</code> 通常弹 toast，而不是插入聊天消息。</td>
+          </tr>
+          <tr>
+            <td><code>error</code></td>
+            <td>worker 捕获异常或 LLM fallback 失败时发布；SDK 进入 <code>onError</code>。</td>
+            <td>清空乐观消息，输入区退出 streaming，页面 toast 展示错误；token usage 等相关 query 会按需刷新。</td>
+          </tr>
+          <tr>
+            <td><code>end</code></td>
+            <td>worker finally 阶段发布；SDK 进入 finish 路径。</td>
+            <td>输入框恢复 ready；sidebar/thread search cache 刷新；token usage query 刷新；如果页面不在前台，前端会用最终回答摘要触发系统通知。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>因此，工具、技能和子任务并不是靠单独的“tool event”或“skill event”直接画 UI。多数可见内容最终都落在 <code>messages</code> 或 <code>values</code> 里：<code>AIMessage.tool_calls</code> 决定显示哪个处理步骤，<code>ToolMessage</code> 补上结果，<code>values</code> 里的 <code>title/todos/artifacts</code> 更新页面外围状态。真正的原始事件层更偏运行时协议，前端用户看到的是经过 state 合并和 message grouping 后的产品形态。</p>
+
+      <h3 id="message-types">messages 类型</h3>
+      <p><code>messages</code> 是最容易误解的一类输出：它不是只有“模型回答文本”，而是 LangChain message、tool call 和 tool result 的组合。DeerFlow 前端会先把原始消息过滤和归组，再决定显示成普通回答、处理中步骤、子任务卡片、文件列表或澄清块。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>消息形态</th>
+            <th>识别依据</th>
+            <th>渲染动作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>普通 AI 文本</td>
+            <td><code>AIMessage</code> 有可见 <code>content</code>，且不是隐藏控制消息。</td>
+            <td>显示为 assistant markdown 气泡。流式中的最后一条 assistant 气泡会显示 loading/streaming 状态。</td>
+          </tr>
+          <tr>
+            <td>Thinking 内容</td>
+            <td><code>reasoning_content</code>、<code>&lt;think&gt;</code> 或前端可识别的 reasoning 片段。</td>
+            <td>进入 Chain-of-Thought 的 Thinking 区，而不是作为普通正文直接混入回答。</td>
+          </tr>
+          <tr>
+            <td>普通工具调用</td>
+            <td><code>AIMessage.tool_calls</code> 中出现 <code>web_search</code>、<code>read_file</code>、<code>bash</code>、<code>write_file</code>、<code>write_todos</code> 等工具名；随后同 id 的 <code>ToolMessage</code> 带回结果。</td>
+            <td>归入 <code>assistant:processing</code> 分组，渲染为 Chain-of-Thought 步骤。搜索显示结果，读文件显示路径，bash 显示命令代码块，文件写入类工具可打开 artifact 预览。</td>
+          </tr>
+          <tr>
+            <td>Subagent 派发</td>
+            <td><code>AIMessage.tool_calls</code> 中工具名为 <code>task</code>，后续 <code>ToolMessage.tool_call_id</code> 对应这个 task id。</td>
+            <td>进入 <code>assistant:subagent</code> 分组，创建或更新 <code>SubtaskCard</code>，展示子任务执行中、完成或失败状态。</td>
+          </tr>
+          <tr>
+            <td>文件展示</td>
+            <td>模型调用 <code>present_files</code>，文件路径出现在 tool args 中。</td>
+            <td>进入 <code>assistant:present-files</code> 分组。前端先显示 assistant 文本，再用 <code>ArtifactFileList</code> 展示文件列表。</td>
+          </tr>
+          <tr>
+            <td>澄清消息</td>
+            <td><code>ask_clarification</code> 的 <code>ToolMessage</code> 被识别为澄清消息。</td>
+            <td>保留在 processing group 中维持工具关联，同时打开 <code>assistant:clarification</code> 分组，把澄清内容作为醒目的 markdown 消息展示给用户。</td>
+          </tr>
+          <tr>
+            <td>Skill 激活后的输出</td>
+            <td>严格的 <code>/skill-name ...</code> 文本由 <code>SkillActivationMiddleware</code> 在模型前解析，插入隐藏 skill reminder，并通过 RunJournal 记录审计事件。</td>
+            <td>Skill 激活本身通常不是可见聊天气泡；用户看到的是后续模型输出、工具调用或产物。如果 skill 调用搜索、shell 或文件工具，仍按对应 message 类型渲染。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="thread-state">ThreadState 字段</h3>
+      <p><code>values</code> 事件里最核心的数据就是当前图的 channel values。对 DeerFlow lead agent 来说，这个 state 不是裸的 LangGraph 状态，而是 harness 对 LangChain <code>AgentState</code> 的细化：<code>ThreadState</code>。它保留了 agent 对话所需的 <code>messages</code>，同时加入 DeerFlow 自己的文件空间、沙箱、标题、产物、todo、上传文件、图片上下文和 deferred tool promotion 状态。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>字段</th>
+            <th>含义</th>
+            <th>主要作用</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>messages</code></td>
+            <td>继承自 LangChain <code>AgentState</code> 的消息 channel，包含 human、ai、tool 等消息，也可能包含隐藏控制消息。</td>
+            <td>这是模型上下文和前端消息列表的主来源。前端会过滤隐藏消息，再按 human、assistant、processing、subagent、present-files、clarification 等分组渲染。</td>
+          </tr>
+          <tr>
+            <td><code>sandbox</code></td>
+            <td><code>{ sandbox_id }</code>，记录当前 thread 绑定的沙箱实例。</td>
+            <td>让 shell、文件工具和沙箱生命周期能在同一轮或多轮执行中复用同一个隔离环境。reducer 只接受幂等写入；如果同一 thread 出现不同 sandbox id，会直接报错。</td>
+          </tr>
+          <tr>
+            <td><code>thread_data</code></td>
+            <td><code>workspace_path</code>、<code>uploads_path</code>、<code>outputs_path</code> 三类 per-thread 路径。</td>
+            <td>给工具层提供线程级文件空间。读写文件、上传文件、产物导出、路径脱敏和虚拟路径映射都依赖它。</td>
+          </tr>
+          <tr>
+            <td><code>title</code></td>
+            <td>线程标题，通常由 <code>TitleMiddleware</code> 在首轮完整对话后生成。</td>
+            <td>同步到 thread display name，前端顶部标题和侧边栏会用它替换默认新会话标题。</td>
+          </tr>
+          <tr>
+            <td><code>artifacts</code></td>
+            <td>agent 展示或生成的产物路径列表。</td>
+            <td>前端 artifact 入口和文件列表用它展示可打开产物。reducer 会合并并去重，保持路径出现顺序。</td>
+          </tr>
+          <tr>
+            <td><code>todos</code></td>
+            <td>plan mode 下的任务列表，由 <code>write_todos</code> 工具更新。</td>
+            <td>前端输入框上方的 TodoList 来自这里。reducer 语义是“最后一次非 None 更新获胜”，因此空列表也是一次明确清空。</td>
+          </tr>
+          <tr>
+            <td><code>uploaded_files</code></td>
+            <td>用户上传文件的元数据列表，例如文件名、大小、虚拟路径和上传状态。</td>
+            <td><code>UploadsMiddleware</code> 会把它格式化为隐藏的 <code>&lt;uploaded_files&gt;</code> 上下文，让模型知道本轮可用文件。</td>
+          </tr>
+          <tr>
+            <td><code>viewed_images</code></td>
+            <td>按图片路径索引的图片内容缓存，值包含 <code>base64</code> 和 <code>mime_type</code>。</td>
+            <td><code>view_image</code> 工具把读到的图片写入这里，<code>ViewImageMiddleware</code> 再在模型调用前注入视觉输入。空 dict 有特殊含义：清空已处理图片。</td>
+          </tr>
+          <tr>
+            <td><code>promoted</code></td>
+            <td><code>{ catalog_hash, names }</code>，记录 deferred tool 中已经被提升可见的工具名。</td>
+            <td>配合 <code>tool_search</code> 和 <code>DeferredToolFilterMiddleware</code> 使用。catalog hash 变化时会整体替换，避免旧工具名在新工具目录下误暴露。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section" id="runtime-consistency">
+      <h2>运行一致性</h2>
+      <p>运行一致性关注的是：一次 run 从创建到结束，哪些状态必须保持可查询、可恢复、可取消、可审计。DeerFlow 没有把这些职责压到一个对象里，而是拆成 RunRecord、RunStore、checkpointer、ThreadMetaStore 和 StreamBridge 几层。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>一致性对象</th>
+            <th>负责什么</th>
+            <th>实现细节</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>RunRecord</code></td>
+            <td>一次执行的内存事实载体。</td>
+            <td>创建时生成新的 <code>run_id</code>，初始为 <code>pending</code>；Service 启动后台 task 后回填到 record；取消时通过 <code>abort_event</code> 和 <code>abort_action</code> 传递 interrupt / rollback 意图。</td>
+          </tr>
+          <tr>
+            <td><code>RunManager</code></td>
+            <td>run 状态机、thread 内并发策略和索引。</td>
+            <td><code>create_or_reject</code> 会在同一把锁内检查 inflight run 并创建新 run；<code>reject</code> 阻止同线程并发，<code>interrupt</code> / <code>rollback</code> 会先取消旧 run 再创建新 run。</td>
+          </tr>
+          <tr>
+            <td><code>RunStore</code></td>
+            <td>run 元数据、状态、token 和 completion 的持久化。</td>
+            <td>状态更新会写入 store；短暂数据库异常有 bounded retry。Gateway 启动时会把没有本地 worker 持有的历史 <code>pending/running</code> run 标记为 error，避免 UI 永远显示运行中。</td>
+          </tr>
+          <tr>
+            <td>LangGraph checkpointer</td>
+            <td>保存 ThreadState 的 checkpoint、history 和 channel values。</td>
+            <td>worker 执行前捕获 pre-run checkpoint；rollback 时可恢复到运行前状态；<code>/wait</code> 只有观察到 <code>end</code> 后才序列化最终 checkpoint，避免把半成品 state 当成成功结果返回。</td>
+          </tr>
+          <tr>
+            <td><code>ThreadMetaStore</code></td>
+            <td>thread 列表、owner、display name 和运行状态。</td>
+            <td>run 创建时 upsert thread meta 并置为 running；worker finally 中从 checkpoint 读 <code>title</code> 同步 display name，并把成功 run 对应的 thread 状态置回 idle，失败或中断则写入对应状态。</td>
+          </tr>
+          <tr>
+            <td><code>StreamBridge</code></td>
+            <td>事件生产与 SSE 消费之间的一致性缓冲。</td>
+            <td>worker 发布 metadata、values、messages、error、end；consumer 支持 heartbeat、<code>Last-Event-ID</code> 重连 replay 和 end sentinel；run 结束后延迟 cleanup，给前端收尾和短暂重连留窗口。</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="quote">
+        <p>运行一致性的核心不是让所有状态“同时写完”，而是让每一层有清晰的事实来源：run 是否活着看 RunManager / RunStore，thread 当前内容看 checkpointer，列表与归属看 ThreadMetaStore，浏览器流式消费看 StreamBridge。</p>
+      </div>
+      <p>关停路径也服务这个目标。Gateway shutdown 时会先 drain in-flight runs，再关闭 checkpointer 资源，避免后台 graph 还在写 checkpoint 时连接池已经被释放。对于无法在窗口内完成的 run，系统会记录风险并在下次启动时通过 orphaned inflight recovery 把状态收敛到 error。</p>
+    </section>
+
+    <section class="section" id="memory-management">
+      <h2>记忆管理</h2>
+      <p>记忆管理解决的是长期上下文如何产生、保存和再次注入。它不等同于 checkpoint：checkpoint 保存当前 thread 的运行状态，memory 保存跨 run、跨 thread 仍可能有价值的用户偏好、事实和历史摘要。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>阶段</th>
+            <th>参与组件</th>
+            <th>实现细节</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>注入</td>
+            <td><code>DynamicContextMiddleware</code>、memory storage、<code>format_memory_for_injection</code></td>
+            <td>模型调用前读取当前用户 / agent 的 memory，按 <code>max_injection_tokens</code> 裁剪并包进隐藏 <code>&lt;memory&gt;</code> 上下文。token 估算可用 <code>tiktoken</code> 或无网络依赖的 <code>char</code> 策略。</td>
+          </tr>
+          <tr>
+            <td>采集</td>
+            <td><code>MemoryMiddleware.after_agent</code></td>
+            <td>Agent 结束后从 state 里取 messages，只保留用户输入和最终 assistant response，忽略工具过程；同时检测 correction / reinforcement 信号，并在请求上下文还存在时捕获 <code>user_id</code>。</td>
+          </tr>
+          <tr>
+            <td>入队</td>
+            <td><code>MemoryUpdateQueue</code></td>
+            <td>队列按 <code>thread_id + user_id + agent_name</code> 去重 debounce。窗口内多次更新会合并为最新 context，避免每轮小消息都触发一次记忆模型调用。</td>
+          </tr>
+          <tr>
+            <td>提炼</td>
+            <td><code>MemoryUpdater</code>、memory update prompt、LLM</td>
+            <td>后台线程处理队列，使用同步 <code>model.invoke()</code> 路径调用 memory model，避免复用 lead agent 的 async HTTP client 造成跨 event loop 连接问题。模型输出 JSON 后再做解析和规则化。</td>
+          </tr>
+          <tr>
+            <td>清洗</td>
+            <td><code>format_conversation_for_memory</code>、updater 规则</td>
+            <td>上传文件标签会从 human message 中剥离，避免把临时文件路径写入长期记忆；过长消息会截断；事实会按 confidence、最大数量和更新规则合并。</td>
+          </tr>
+          <tr>
+            <td>保存</td>
+            <td><code>FileMemoryStorage</code> 或自定义 storage class</td>
+            <td>默认按用户隔离到 <code>{base_dir}/users/{user_id}/memory.json</code>，也支持 per-agent memory。文件存储按 mtime 缓存读取，保存时写临时文件再 replace，更新 <code>lastUpdated</code>。</td>
+          </tr>
+          <tr>
+            <td>管理</td>
+            <td><code>/api/memory</code>、前端记忆管理页、channel 命令</td>
+            <td>API 用于查看、reload、清空、导入和人工维护 memory facts。Agent runtime 通常不通过 HTTP 调这个 API，而是直接读写同一套 memory storage / updater。</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="compare">
+        <div class="good">
+          <h3>为什么异步更新</h3>
+          <p>记忆提炼需要额外模型调用，且失败不应该影响当前回答。放到 debounce 队列后，主 run 可以先完成，长期记忆以 best-effort 方式收敛。</p>
+        </div>
+        <div class="note">
+          <h3>为什么不写入所有消息</h3>
+          <p>工具调用、上传文件路径、临时错误和中间推理容易污染长期记忆。DeerFlow 只保留用户输入和最终回答，再由 memory prompt 决定哪些内容值得沉淀。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="reading">
+      <h2>源码阅读路径</h2>
+      <p>如果要继续追源码，建议按运行时边界阅读，而不是按文件夹顺序扫。</p>
+      <ol>
+        <li><code>docker/nginx/nginx.local.conf</code>: 先确认外部路径如何进入 Gateway，尤其是 <code>/api/langgraph/*</code> 的 rewrite 和 SSE proxy 设置。</li>
+        <li><code>backend/app/gateway/routers/threads.py</code>: 看 thread 如何创建、搜索、读取 state 和 history。</li>
+        <li><code>backend/app/gateway/routers/thread_runs.py</code>: 看 run/stream/wait/cancel 的 HTTP 表面。</li>
+        <li><code>backend/app/gateway/services.py</code>: 看请求如何被规范化，context 白名单如何进入 runtime config。</li>
+        <li><code>backend/packages/harness/deerflow/runtime/runs/worker.py</code>: 看 RunManager、StreamBridge、checkpointer、agent.astream 如何串起来。</li>
+        <li><code>backend/packages/harness/deerflow/agents/lead_agent/agent.py</code>: 看模型选择、thinking 降级、工具加载和 middleware 组装。</li>
+        <li><code>backend/packages/harness/deerflow/agents/middlewares/</code>: 按执行链理解 ThreadData、DynamicContext、Title、TokenUsage、Memory 等横切能力。</li>
+      </ol>
+    </section>
+  </main>
+</body>
+</html>
