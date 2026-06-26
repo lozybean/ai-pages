@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI 工具研究专题｜AI Pages</title>
+  <link rel="stylesheet" href="../../assets/site-nav.css" />
+  <script src="../../assets/site-nav.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <section class="hero">
+        <div class="eyebrow">AI Tool Research</div>
+        <h1>AI 工具研究专题</h1>
+        <p class="intro">记录 AI agent、coding agent、agent harness、MCP、沙箱、运行时与工程工作流工具的学习和调研过程。重点不是复述项目介绍，而是追到真实运行路径、边界设计和可复用的工程判断。</p>
+        <div class="meta">
+          <span class="tag">Agent Harness</span>
+          <span class="tag green">Coding Agent</span>
+          <span class="tag orange">Sandbox</span>
+          <span class="tag purple">MCP</span>
+        </div>
+      </section>
+    </header>
+
+    <section class="summary">
+      <h2>专题口径</h2>
+      <p>这个专题用于沉淀对 AI 工具的连续研究：每个对象都尽量从实际使用体验进入，再回到源码、运行时、权限边界、上下文策略、扩展机制和部署方式。后续 DeerFlow 2.0、Codex 周边工具、Claude Code 工作流、MCP 生态和自研 harbor-flow 设计思考都可以继续收纳到这里。</p>
+    </section>
+
+    <div class="section-title"><h2>研究列表</h2><span>按最近整理时间倒序排列</span></div>
+
+    <section class="grid">
+      <article class="card">
+        <div class="card-head"><h3>Everything Claude Code / ECC 仓库分析与使用建议</h3><span class="date">发布：2026-06-22</span></div>
+        <p class="desc">分析 affaan-m/ECC 对 Codex、Claude Code 与日常 agent 工作流的可复用价值，重点看 skills、rules、verification、security boundary、MCP selection 和 multi-agent handoff。</p>
+        <div class="meta"><span class="tag">ECC</span><span class="tag green">Agent Workflow</span><span class="tag orange">Skills</span><span class="tag purple">MCP</span></div>
+        <div class="actions"><a class="button primary" href="../../research/everything-claude-code/index.html">打开研究</a></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><h3>CodeWhale Coding Agent 调研总览</h3><span class="date">整理：2026-06</span></div>
+        <p class="desc">围绕 DeepSeek V4 coding agent 的本地源码快照，梳理 agent 编排、prefix cache、平台沙箱、runtime API 与远程控制路径。</p>
+        <div class="meta"><span class="tag">CodeWhale</span><span class="tag green">DeepSeek</span><span class="tag orange">Prefix Cache</span><span class="tag purple">Runtime API</span></div>
+        <div class="actions"><a class="button primary" href="../../research/codewhale-agent/index.html">打开研究</a></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><h3>Reasonix 技术调研总览</h3><span class="date">整理：2026-06</span></div>
+        <p class="desc">分析 DeepSeek-native coding agent 的主循环、prefix cache、应用层沙箱、远程 dashboard / QQ 通道与 ACP 集成边界。</p>
+        <div class="meta"><span class="tag">Reasonix</span><span class="tag green">Coding Agent</span><span class="tag orange">Cache First</span><span class="tag purple">ACP</span></div>
+        <div class="actions"><a class="button primary" href="../../research/reasonix-agent/index.html">打开研究</a></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><h3>Coding Agent 沙箱技术调研</h3><span class="date">更新：2026-05-29</span></div>
+        <p class="desc">梳理 coding agent 沙箱的威胁模型、技术谱系、容器 / microVM / Wasm 取舍，以及企业云端落地时需要关注的权限和成本边界。</p>
+        <div class="meta"><span class="tag">Sandbox</span><span class="tag green">Containers</span><span class="tag orange">microVM</span><span class="tag red">Security</span></div>
+        <div class="actions"><a class="button primary" href="../../pages/coding-agent-sandbox-research.html">打开文章</a></div>
+      </article>
+    </section>
+
+    <footer><p>维护说明：新增 AI 工具研究页面后，请同步更新本专题索引和根目录 <code>index.html</code>。工具研究页可以继续放在 <code>research/</code> 下，本专题负责提供稳定入口。</p></footer>
+  </main>
+</body>
+</html>
