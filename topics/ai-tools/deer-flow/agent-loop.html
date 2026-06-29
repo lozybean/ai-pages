@@ -1,0 +1,1168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DeerFlow 研究：Agent Loop、Skills 与 Subagent 机制</title>
+  <link rel="stylesheet" href="../../../assets/site-nav.css" />
+  <script src="../../../assets/site-nav.js" defer></script>
+  <style>
+    .loop-svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      margin: 1rem 0 0;
+    }
+
+    .svg-title {
+      font-size: 15px;
+      font-weight: 800;
+      fill: #24211d;
+    }
+
+    .svg-small {
+      font-size: 12px;
+      fill: #6f675f;
+    }
+
+    .svg-label {
+      font-size: 13px;
+      font-weight: 700;
+      fill: #8a5a35;
+    }
+
+    .article-toc a.toc-child,
+    .article-toc-mobile-drawer__links a.toc-child {
+      margin-left: 16px;
+      padding-left: 18px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      position: relative;
+    }
+
+    .article-toc a.toc-child::before,
+    .article-toc-mobile-drawer__links a.toc-child::before {
+      content: "";
+      position: absolute;
+      left: 7px;
+      top: 50%;
+      width: 6px;
+      height: 1px;
+      background: var(--line);
+    }
+
+    .flow-steps {
+      display: grid;
+      gap: 1rem;
+      margin: 1rem 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .flow-steps > li {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+      padding: 1rem;
+    }
+
+    .flow-steps h3,
+    .flow-steps h4 {
+      margin-top: 0;
+    }
+
+    .capability-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .capability-grid .mini {
+      min-width: 0;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">DeerFlow Research · Agent Loop</div>
+      <h1>DeerFlow 研究：Agent Loop、Skills 与 Subagent 机制</h1>
+      <p class="intro">在 Run Runtime 之内，真正反复推进工作的不是 HTTP 请求，也不是 SSE 连接，而是 Lead Agent 围绕 messages、model、tool calls、middleware 和 ThreadState 形成的执行闭环。本文从这个闭环出发，解释 DeerFlow 如何组装 agent、控制模型上下文、接入 tools / skills / MCP，并在复杂任务中派发 subagent。</p>
+      <div class="meta">
+        <span class="tag">Agent Loop</span>
+        <span class="tag green">Skills</span>
+        <span class="tag orange">MCP</span>
+        <span class="tag purple">Subagent</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#loop-definition">定义 Agent Loop</a>
+      <a href="#loop-control">Loop 控制流</a>
+      <a class="toc-child" href="#todo-loop">Plan Mode 与 Todo 控制</a>
+      <a class="toc-child" href="#deliverable-exit">交付物出口</a>
+      <a href="#lead-agent-build">Lead Agent 如何组装</a>
+      <a class="toc-child" href="#run-config">Run Config 进入 Agent Factory</a>
+      <a class="toc-child" href="#factory-flow">Agent Factory 组装链路</a>
+      <a href="#context-control">Context Engineer</a>
+      <a class="toc-child" href="#context-layers">上下文分层</a>
+      <a class="toc-child" href="#prefix-caching">Prefix Caching</a>
+      <a class="toc-child" href="#context-window">上下文窗口感知</a>
+      <a class="toc-child" href="#context-compression">上下文压缩</a>
+      <a class="toc-child" href="#context-pruning">上下文剪枝</a>
+      <a class="toc-child" href="#memory-interaction">记忆系统交互</a>
+      <a class="toc-child" href="#thinking-control">Thinking 控制</a>
+      <a href="#capability-surface">能力面分层</a>
+      <a class="toc-child" href="#tools">Tools 是执行接口</a>
+      <a class="toc-child" href="#skills">Skills 是工作流知识</a>
+      <a class="toc-child" href="#dynamic-capability-loading">动态能力加载</a>
+      <a class="toc-child" href="#mcp">MCP 是外部工具协议</a>
+      <a href="#multi-agent">Custom Agent 与 Subagent</a>
+      <a class="toc-child" href="#custom-agent">Custom Agent</a>
+      <a class="toc-child" href="#subagent">Subagent</a>
+      <a href="#middleware-loop">Middleware 如何改变 Loop</a>
+      <a href="#scenario-flows">场景流程</a>
+      <a href="#deepagents-compare">与 DeepAgents 对比</a>
+      <a href="#reading">源码阅读路径</a>
+    </nav>
+
+    <section class="summary" id="loop-definition">
+      <h2>定义 Agent Loop</h2>
+      <p>DeerFlow 的 Agent Loop 可以先还原成一个最小闭环：历史 <code>messages</code> 进入模型，模型返回文本或 <code>tool_calls</code>，工具执行后生成 <code>ToolMessage</code>，新的消息再回到模型，直到模型给出最终回答或中间件打断循环。这个闭环来自 LangChain / LangGraph 的 agent 抽象，但 DeerFlow 没有停在这个抽象层，而是把线程目录、上传文件、沙箱、记忆、标题、token 统计、MCP 工具、subagent 状态和前端事件都挂到同一条执行链上。</p>
+      <p class="quote">这篇文章讨论的不是 DeerFlow 的外部服务架构，而是一次 Run 内部的执行闭环：模型看见什么、能调用什么、什么时候继续循环、什么时候中断，以及复杂任务如何被拆给 subagent。</p>
+
+      <svg class="loop-svg" viewBox="0 0 980 420" role="img" aria-label="DeerFlow Agent Loop 总图，展示 messages、model、tool calls、tools、ToolMessage、middleware 和 ThreadState 的关系">
+        <defs>
+          <marker id="arrow-loop" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+
+        <rect x="35" y="50" width="180" height="64" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="125" y="78" text-anchor="middle" class="svg-title">ThreadState</text>
+        <text x="125" y="99" text-anchor="middle" class="svg-small">messages / title / todos</text>
+
+        <rect x="295" y="50" width="180" height="64" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="385" y="78" text-anchor="middle" class="svg-title">Middleware</text>
+        <text x="385" y="99" text-anchor="middle" class="svg-small">prepare / filter / audit</text>
+
+        <rect x="555" y="50" width="180" height="64" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="645" y="78" text-anchor="middle" class="svg-title">Model</text>
+        <text x="645" y="99" text-anchor="middle" class="svg-small">text or tool_calls</text>
+
+        <rect x="555" y="205" width="180" height="64" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="645" y="233" text-anchor="middle" class="svg-title">Tool Calls</text>
+        <text x="645" y="254" text-anchor="middle" class="svg-small">sandbox / MCP / task</text>
+
+        <rect x="295" y="205" width="180" height="64" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+        <text x="385" y="233" text-anchor="middle" class="svg-title">Tools</text>
+        <text x="385" y="254" text-anchor="middle" class="svg-small">execute side effects</text>
+
+        <rect x="35" y="205" width="180" height="64" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+        <text x="125" y="233" text-anchor="middle" class="svg-title">ToolMessage</text>
+        <text x="125" y="254" text-anchor="middle" class="svg-small">result / error / status</text>
+
+        <rect x="295" y="330" width="180" height="54" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="385" y="353" text-anchor="middle" class="svg-title">Run Events</text>
+        <text x="385" y="372" text-anchor="middle" class="svg-small">SSE / journal / usage</text>
+
+        <rect x="780" y="130" width="160" height="92" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="860" y="157" text-anchor="middle" class="svg-title">Prompt Surface</text>
+        <text x="860" y="179" text-anchor="middle" class="svg-small">SOUL / skills</text>
+        <text x="860" y="199" text-anchor="middle" class="svg-small">memory / tool schemas</text>
+
+        <line x1="215" y1="82" x2="295" y2="82" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-loop)"></line>
+        <line x1="475" y1="82" x2="555" y2="82" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-loop)"></line>
+        <line x1="645" y1="114" x2="645" y2="205" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-loop)"></line>
+        <line x1="555" y1="237" x2="475" y2="237" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-loop)"></line>
+        <line x1="295" y1="237" x2="215" y2="237" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-loop)"></line>
+        <path d="M125 205 C125 155, 125 145, 125 114" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-loop)"></path>
+        <line x1="385" y1="269" x2="385" y2="330" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-loop)"></line>
+        <line x1="780" y1="176" x2="735" y2="95" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-loop)"></line>
+      </svg>
+    </section>
+
+    <section class="section" id="loop-control">
+      <h2>Loop 控制流：继续、回跳与停止</h2>
+      <p>只看“模型输出文本或工具调用”还不够。DeerFlow 真正值得注意的是控制流：一次模型输出之后，runtime 要判断它是最终答案、工具动作、需要用户介入，还是一个应该被拦截的异常形态。这个判断分散在 LangGraph agent、tools、middleware 和 prompt policy 里。</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>触发形态</th>
+            <th>Loop 行为</th>
+            <th>关键意义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>AIMessage 没有 <code>tool_calls</code></td>
+            <td>通常视为本轮 agent 输出完成，进入 after-agent、memory、journal、Run 完成流程。</td>
+            <td>这是自然停止路径；但仍可能被 Todo 或安全类 middleware 改写。</td>
+          </tr>
+          <tr>
+            <td>AIMessage 带普通 <code>tool_calls</code></td>
+            <td>进入工具节点，生成对应 <code>ToolMessage</code>，再把新消息交还给模型。</td>
+            <td>这是最标准的 agent loop：模型选择动作，工具返回事实，模型继续决策。</td>
+          </tr>
+          <tr>
+            <td><code>ask_clarification</code></td>
+            <td><code>ClarificationMiddleware</code> 把澄清工具调用转成 interrupt / END，等待用户补充后再继续。</td>
+            <td>澄清不是普通工具结果，而是用户介入控制点；它应该发生在行动前。</td>
+          </tr>
+          <tr>
+            <td>未完成 todo 但模型想直接结束</td>
+            <td><code>TodoMiddleware</code> 注入隐藏 completion reminder，并 <code>jump_to="model"</code> 让模型继续。</td>
+            <td>Plan mode 让 todo 成为状态约束，而不只是一个展示用清单。</td>
+          </tr>
+          <tr>
+            <td>重复工具调用或过高工具频率</td>
+            <td><code>LoopDetectionMiddleware</code> 先注入警告，达到 hard limit 后移除 tool calls，迫使模型收束。</td>
+            <td>避免 agent 靠递归上限失败，把失败转成可解释的最终答复。</td>
+          </tr>
+          <tr>
+            <td>provider 安全终止但残留 tool calls</td>
+            <td><code>SafetyFinishReasonMiddleware</code> 清空半截 tool calls，追加用户可见解释，并发出观测事件。</td>
+            <td>防止被安全过滤截断的 <code>write_file</code> / tool args 继续执行，造成坏文件或循环修复。</td>
+          </tr>
+          <tr>
+            <td>Guardrail 拒绝工具调用</td>
+            <td><code>GuardrailMiddleware</code> 返回 error <code>ToolMessage</code>，让模型换方案。</td>
+            <td>这是“阻断副作用但不中断 Run”的控制方式，和安全终止不同。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p class="quote">Agent Loop 的工程质量，不只体现在能调用多少工具，也体现在每次模型输出后能否被正确分流：该继续时继续，该问人时问人，该停止时停止，该把错误转成上下文时就返回 ToolMessage。</p>
+
+      <h3 id="todo-loop">Plan Mode 与 Todo 控制</h3>
+      <p><code>is_plan_mode</code> 打开后，DeerFlow 不只是给模型加一个 <code>write_todos</code> 工具。<code>TodoMiddleware</code> 会把 todo 放进 <code>ThreadState.todos</code>，并在上下文窗口里的原始 <code>write_todos</code> 调用被摘要或裁剪掉后，重新注入隐藏 <code>todo_reminder</code>。这样模型不会因为历史被压缩，就忘掉仍未完成的计划。</p>
+      <p>更关键的是 premature-exit 防护：如果模型没有工具调用、看起来准备给最终答复，但 <code>todos</code> 里仍有未完成项，middleware 会把 completion reminder 暂存到下一次 model request，并跳回 <code>model</code> 节点。这个回跳有次数上限，避免模型确实无法推进时形成新的死循环。</p>
+
+      <h3 id="deliverable-exit">交付物出口：present_files 与 artifacts</h3>
+      <p>文件型任务还有一个常被忽略的出口：生成文件不等于交付文件。Lead Agent prompt 要求最终交付物放到 <code>/mnt/user-data/outputs</code>，再调用 <code>present_files</code>。这个工具只接受 outputs 目录下的路径，成功后通过 <code>Command(update={"artifacts": ...})</code> 写回 <code>ThreadState.artifacts</code>，再由前端把文件变成可查看、可下载的交付物。</p>
+      <p>因此，<code>present_files</code> 不是一个普通“通知用户”的工具，而是 agent loop 离开文本消息、把产物挂到用户界面的正式出口。它也解释了为什么 prompt 里区分 <code>uploads</code>、<code>workspace</code> 和 <code>outputs</code>：上传文件是输入，workspace 是中间工作区，outputs 才是可交付边界。</p>
+    </section>
+
+    <section class="section" id="lead-agent-build">
+      <h2>Lead Agent 如何组装</h2>
+      <p>DeerFlow 的 Lead Agent 不是一个固定单例，而是每次 Run 根据 runtime config 动态组装出的 LangGraph agent。这个事实很重要：同一个代码入口在不同请求下可能选择不同模型、不同 custom agent、不同 tool group、不同 skill 白名单，也可能打开或关闭 plan mode、thinking 和 subagent。</p>
+
+      <h3 id="run-config">Run Config 进入 Agent Factory</h3>
+      <p>Gateway 的 run service 会把请求中的白名单 context 写入 <code>configurable</code> 和 <code>context</code>。这些字段进入 <code>make_lead_agent()</code> 后，决定 agent factory 的主要分支。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>字段</th>
+            <th>对 Agent Loop 的影响</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>model_name</code> / <code>model</code></td>
+            <td>选择本次 Run 使用的模型；如果请求模型不存在，会回落到默认模型。</td>
+          </tr>
+          <tr>
+            <td><code>thinking_enabled</code> / <code>reasoning_effort</code></td>
+            <td>控制模型的 reasoning / thinking 参数，而不是暴露或保存隐藏思维链。</td>
+          </tr>
+          <tr>
+            <td><code>is_plan_mode</code></td>
+            <td>决定是否挂载 todo 管理工具和对应 middleware。</td>
+          </tr>
+          <tr>
+            <td><code>subagent_enabled</code></td>
+            <td>决定是否把 <code>task</code> 工具暴露给模型，从而允许 Lead Agent 派发 subagent。</td>
+          </tr>
+          <tr>
+            <td><code>max_concurrent_subagents</code></td>
+            <td>进入 subagent prompt 和 <code>SubagentLimitMiddleware</code>，限制一次模型输出中的并发 task 数。</td>
+          </tr>
+          <tr>
+            <td><code>agent_name</code> / <code>is_bootstrap</code></td>
+            <td>选择 custom agent 或 bootstrap agent，影响 SOUL、skills、tools 和可更新能力。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="factory-flow">Agent Factory 组装链路</h3>
+      <p><code>make_lead_agent()</code> 内部的关键动作可以看成一条确定的装配线。它先解析“这次要跑哪个 agent”，再决定模型、工具和上下文治理，最后调用 LangChain 的 <code>create_agent()</code> 生成真正执行的图。</p>
+      <ol class="flow-steps">
+        <li>
+          <h3>1. 合并 runtime config</h3>
+          <p>DeerFlow 同时兼容旧的 <code>configurable</code> 和新的 LangGraph <code>context</code>。Agent factory 会把两者合并，让模型选择、agent_name、subagent 开关等字段在旧新路径下都可见。</p>
+        </li>
+        <li>
+          <h3>2. 解析 custom agent</h3>
+          <p>如果存在 <code>agent_name</code>，factory 会读取该 agent 的 <code>config.yaml</code> 和 <code>SOUL.md</code>。config 控制 description、model、tool_groups、skills；SOUL 进入系统提示，定义这个 agent 的身份和行为约束。</p>
+        </li>
+        <li>
+          <h3>3. 解析模型与 thinking 能力</h3>
+          <p>模型来自请求、custom agent config 或全局默认值。若请求启用 thinking，但模型配置没有 <code>supports_thinking</code>，DeerFlow 会降级为非 thinking 模式，避免把不被支持的 reasoning 参数传给模型。</p>
+        </li>
+        <li>
+          <h3>4. 加载 tools 与 skills</h3>
+          <p><code>get_available_tools()</code> 聚合 config tools、built-in tools、MCP tools、ACP tools，以及条件暴露的 <code>task</code> 和 <code>view_image</code>。随后用 skills 的 <code>allowed-tools</code> 做工具过滤。</p>
+        </li>
+        <li>
+          <h3>5. 组装 deferred MCP tools 与 middleware</h3>
+          <p>如果开启 tool search，MCP 工具可以先进入 deferred catalog，而不是全部绑定给模型。然后 factory 组装基础运行时 middleware、动态上下文、技能激活、摘要、todo、标题、记忆、视觉、subagent 限流、循环检测、安全终止和澄清中断。</p>
+        </li>
+      </ol>
+
+      <p class="quote">Lead Agent 的“能力边界”不是单独由 prompt 决定，也不是单独由工具注册表决定，而是由 Run config、custom agent config、skills policy、MCP deferred policy 和 middleware 链共同决定。</p>
+    </section>
+
+    <section class="section" id="context-control">
+      <h2>Context Engineer</h2>
+      <p>Agent Loop 的质量首先取决于模型看见什么，以及旧内容什么时候被压缩、哪些运行时信息允许进入模型、哪些内容应该留在长期记忆而不是继续占用消息窗口。DeerFlow 的 Context Engineer 不是单点逻辑，而是由模型配置、middleware、记忆队列和 provider 适配器共同完成。</p>
+
+      <div class="summary">
+        <h3>什么是 Context Engineer</h3>
+        <p>在 DeerFlow 里，Context Engineer 可以理解为对模型输入面的工程化治理：决定哪些信息进入 system prompt，哪些信息作为隐藏运行时消息注入，哪些历史被摘要，哪些工具 schema 暂缓暴露，哪些用户偏好进入长期 memory，以及这些内容如何在 token budget、prefix cache、前端可见性和可恢复性之间取舍。</p>
+      </div>
+
+      <p>从这个定义出发，本节不只讨论“prompt 怎么写”，而是先建立上下文分层模型，再回答容量如何感知、历史如何压缩、稳定前缀如何复用、短期上下文和长期记忆如何互相转化。</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>治理问题</th>
+            <th>DeerFlow 里的对应机制</th>
+            <th>风险</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>上下文预算</td>
+            <td>summarization trigger / keep、memory 注入预算、tool output budget、deferred tool schema。</td>
+            <td>只按消息数控制会漏掉超长工具输出；只按 token 控制又可能误删关键 skill 或 tool pair。</td>
+          </tr>
+          <tr>
+            <td>上下文生命周期</td>
+            <td>首轮动态注入、跨日期轻量更新、summary 替换旧消息、memory queue 异步沉淀。</td>
+            <td>live context、checkpoint state 和长期 memory 的恢复能力不同，不能把它们视为同一种状态。</td>
+          </tr>
+          <tr>
+            <td>可观测性</td>
+            <td>token usage、summary message、memory queue、provider cache read metadata、前端隐藏消息规则。</td>
+            <td>如果没有观测点，压缩、记忆污染、cache 失效和上下文注入超时都很难定位。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="context-layers">上下文分层</h3>
+      <p>原来单独讲“Prompt 组成”容易让人以为上下文就是系统提示文本。更准确的理解是：system prompt 只是最稳定、优先级最高的一层；DeerFlow 还会在不同生命周期里注入 hidden messages、summary、recent raw messages、tool schemas、skills 和 memory。Context Engineer 的关键不是把所有信息塞进 prompt，而是决定每类信息应该落在哪一层。</p>
+
+      <p>这七层没有严格的“模型一定先读哪层、后读哪层”的语义顺序；模型最终看到的是一次 provider payload。但它们有明确的工程顺序倾向：越稳定、越可复用、越像策略的内容，越应该靠近底部；越动态、越和当前任务或工具结果绑定的内容，越应该靠近尾部、受到预算控制，或者被压缩成 summary / memory。Prefix Caching 可以看作这个稳定性分层带来的收益之一，具体策略放到下一节集中讨论。</p>
+
+      <svg class="loop-svg" viewBox="0 0 980 520" role="img" aria-label="DeerFlow Context Engineer 七层上下文金字塔，展示稳定策略内容到底层，动态高 token 内容到上层">
+        <defs>
+          <marker id="arrow-context" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+
+        <text x="490" y="34" text-anchor="middle" class="svg-label">越向下：越稳定、越可复用、越接近策略层；越向上：越动态、越占 token、越需要压缩或隔离</text>
+
+        <polygon points="490,62 820,455 160,455" fill="#fffdf8" stroke="#e4dbcf" stroke-width="2"></polygon>
+
+        <polygon points="490,62 555,140 425,140" fill="#fff8f5" stroke="#9f4d3f"></polygon>
+        <text x="490" y="107" text-anchor="middle" class="svg-title">当前任务层</text>
+        <text x="490" y="126" text-anchor="middle" class="svg-small">user turn / uploads / slash skill</text>
+
+        <polygon points="425,140 555,140 615,212 365,212" fill="#fcf9fd" stroke="#76527f"></polygon>
+        <text x="490" y="174" text-anchor="middle" class="svg-title">短期连续性层</text>
+        <text x="490" y="194" text-anchor="middle" class="svg-small">recent messages / tool pairs</text>
+
+        <polygon points="365,212 615,212 675,284 305,284" fill="#f2faf7" stroke="#2f6f68"></polygon>
+        <text x="490" y="246" text-anchor="middle" class="svg-title">压缩历史层</text>
+        <text x="490" y="266" text-anchor="middle" class="svg-small">summary message</text>
+
+        <polygon points="305,284 675,284 735,356 245,356" fill="#fff7ed" stroke="#9f5a2f"></polygon>
+        <text x="490" y="318" text-anchor="middle" class="svg-title">动态运行时层</text>
+        <text x="490" y="338" text-anchor="middle" class="svg-small">memory / date as hidden reminder</text>
+
+        <polygon points="245,356 735,356 770,398 210,398" fill="#fbfef9" stroke="#5f7f55"></polygon>
+        <text x="490" y="382" text-anchor="middle" class="svg-title">工具能力层</text>
+
+        <polygon points="210,398 770,398 795,428 185,428" fill="#f6f8fa" stroke="#596f86"></polygon>
+        <text x="490" y="419" text-anchor="middle" class="svg-title">长期记忆层</text>
+
+        <polygon points="185,428 795,428 820,455 160,455" fill="#fffdf8" stroke="#8a5a35"></polygon>
+        <text x="490" y="448" text-anchor="middle" class="svg-title">稳定系统层：system prompt / SOUL / rules / policies</text>
+
+        <line x1="78" y1="450" x2="78" y2="92" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-context)"></line>
+        <text x="78" y="72" text-anchor="middle" class="svg-small">higher volatility</text>
+        <text x="78" y="472" text-anchor="middle" class="svg-small">stable base</text>
+
+        <line x1="860" y1="86" x2="860" y2="450" stroke="#5f7f55" stroke-width="2" marker-end="url(#arrow-context)"></line>
+        <text x="860" y="70" text-anchor="middle" class="svg-small">assembly pressure</text>
+        <text x="860" y="472" text-anchor="middle" class="svg-small">stability pressure</text>
+      </svg>
+
+      <ol class="flow-steps">
+        <li>
+          <h4>1. 稳定系统层：最稳定、最接近策略层</h4>
+          <p><strong>来源：</strong>Lead Agent prompt、custom agent <code>SOUL.md</code>、thinking style、clarification rules、subagent policy、skills summary、deferred tool hint。</p>
+          <p><strong>形态：</strong>进入 provider payload 的 system prompt，通常由多个语义区块拼成。</p>
+          <p><strong>装配内容：</strong>身份、行为边界、澄清优先级、subagent 使用规则、skills 索引和 deferred tool 提示。它决定 agent 的稳定行为，不应该混入 current date、用户 memory、上传文件这类高变化内容。</p>
+        </li>
+        <li>
+          <h4>2. 工具能力层：相对稳定，但会随配置和 MCP 变化</h4>
+          <p><strong>来源：</strong><code>get_available_tools()</code>、内置工具、MCP / ACP 工具、vision 工具、subagent <code>task</code> 工具、skill allowed-tools 和 deferred tool search。</p>
+          <p><strong>形态：</strong>绑定给模型的 tool schemas，或者 system prompt 中提示模型可通过 tool search 提升工具。</p>
+          <p><strong>装配内容：</strong>模型可调用的动作集合。工具 schema 在 provider payload 中常与 messages 分开，但同样会消耗输入窗口；工具过多时 DeerFlow 用 deferred catalog 和 skill policy 控制暴露面。</p>
+        </li>
+        <li>
+          <h4>3. 长期记忆层：跨 Run 稳定，但不是常驻上下文</h4>
+          <p><strong>来源：</strong><code>MemoryMiddleware</code>、<code>memory_flush_hook</code>、memory queue、memory storage，以及用户/agent 维度的 memory profile。</p>
+          <p><strong>形态：</strong>存储态不在当前模型输入中；被选中注入时，会变成动态运行时层里的 <code>&lt;memory&gt;</code> 块。</p>
+          <p><strong>装配内容：</strong>用户偏好、纠错、强化信号、长期背景和 facts。它是上下文的来源和归宿，而不是当前消息历史；注入时必须按 confidence 和 token budget 选择。</p>
+        </li>
+        <li>
+          <h4>4. 动态运行时层：每个线程稳定一段时间，但会按用户和日期变化</h4>
+          <p><strong>来源：</strong><code>DynamicContextMiddleware</code> 在首轮或日期变化时注入。</p>
+          <p><strong>形态：</strong>隐藏 <code>HumanMessage</code>，内容是 <code>&lt;system-reminder&gt;</code>，包含 memory 和 current date。</p>
+          <p><strong>装配内容：</strong>当前日期、按预算格式化后的 memory。它放在消息序列里，而不是 system prompt 里，是为了既让模型看到运行时上下文，又避免把高变化内容混入稳定系统层。</p>
+        </li>
+        <li>
+          <h4>5. 压缩历史层：由旧消息生成，稳定性取决于摘要时刻</h4>
+          <p><strong>来源：</strong><code>DeerFlowSummarizationMiddleware</code> 在 <code>before_model</code> 阶段触发。</p>
+          <p><strong>形态：</strong>隐藏 <code>HumanMessage(name="summary")</code>，替代被移除的早期历史。</p>
+          <p><strong>装配内容：</strong>较早对话的短期摘要。它保留旧上下文意图，帮助同一 thread 延续，但不适合保存精确证据；精确信息应留在 recent messages、tool results 或长期 memory 中。</p>
+        </li>
+        <li>
+          <h4>6. 短期连续性层：来自 checkpoint 的近期原始状态</h4>
+          <p><strong>来源：</strong>父 Run checkpoint 中的 recent messages、AIMessage / ToolMessage pair、subagent final ToolMessage、近期工具结果。</p>
+          <p><strong>形态：</strong>原始消息历史，直接进入下一轮模型调用。</p>
+          <p><strong>装配内容：</strong>最近事实、工具结果、模型承诺和还不能摘要掉的证据。长程 agent 的 token 膨胀通常发生在这一层，尤其是工具输出，因此需要 <code>keep</code> 策略和 tool output budget。</p>
+        </li>
+        <li>
+          <h4>7. 当前任务层：最动态、语义优先级最高</h4>
+          <p><strong>来源：</strong>用户本轮输入、上传文件元信息、slash skill activation、图片查看 middleware、本轮显式操作。</p>
+          <p><strong>形态：</strong>可见 HumanMessage 加若干隐藏 HumanMessage / content block。</p>
+          <p><strong>装配内容：</strong>当前任务目标、用户最新约束、上传文件摘要、显式激活的完整 skill 内容和图片理解结果。它最容易突然放大 token 占比，所以需要和压缩、工具预算、memory 注入预算共同协调。</p>
+        </li>
+      </ol>
+
+      <div class="note">
+        <h3>Hidden HumanMessage 与普通 HumanMessage</h3>
+        <p>DeerFlow 里的隐藏消息不是 provider 或 LLM 语义上的“不可见消息”。它仍然是 <code>HumanMessage</code>，进入模型请求时仍按 user / human role 被模型读取；模型不会因为 <code>hide_from_ui</code> 就把它当成更低层级的系统指令，也不会自动忽略它。真正的差别在 DeerFlow 自己的控制面：消息带有 <code>additional_kwargs.hide_from_ui = true</code>，或者使用 <code>name="summary"</code>、<code>&lt;slash_skill_activation&gt;</code> 这类约定，让前端消息分组、导出和服务端 API 序列化把它当成内部上下文处理。</p>
+        <p>普通 <code>HumanMessage</code> 是用户可见的对话输入，会在前端按消息组渲染，也通常被视为 DynamicContext 注入的目标。隐藏 <code>HumanMessage</code> 则用于塞入运行时上下文：例如首轮 <code>&lt;system-reminder&gt;</code> 会携带 current date 和 memory，summary 会用 <code>HumanMessage(name="summary")</code> 保留被压缩的历史，slash skill activation 会把显式激活的 skill 内容放进模型上下文。它们消耗 token、影响模型输出、进入 checkpoint；只是 UI 默认不展示，且序列化给前端时会剥离隐藏消息里的 base64 图片数据。</p>
+        <p>这也解释了为什么隐藏消息不能承担 system prompt 的职责。它的 authority 仍然接近一条 user-role 消息，适合放“当前运行时事实”和“上下文补丁”，不适合放不可被用户覆盖的核心策略。DeerFlow 在 summarization 中还会特别保留 dynamic context reminder，避免它被摘要压掉后，后续轮次把 summary 误判为第一条真实用户消息并重复注入。</p>
+      </div>
+
+      <div class="note">
+        <h3>DeerFlow 实际装配顺序</h3>
+        <p>稳定性排序不等于代码执行顺序。一次 Run 里，DeerFlow 大致先解析 Run config 和 custom agent，生成稳定系统层；随后收集工具能力层并创建 agent；运行时 middleware 再把动态运行时层、当前任务层增强、summary 压缩和近期消息保留依次写入模型请求。</p>
+        <p>长期记忆层的读写是一个闭环。读入时，<code>DynamicContextMiddleware</code> 在首轮构造完整 <code>&lt;system-reminder&gt;</code>，调用 <code>_get_memory_context()</code> 按 user / agent 读取 memory storage，再用 <code>format_memory_for_injection()</code> 按 <code>max_injection_tokens</code> 和 token counting 策略裁剪成 <code>&lt;memory&gt;</code> 块，最后把 reminder 作为隐藏 <code>HumanMessage</code> 放在第一条真实用户消息前。写回时，<code>MemoryMiddleware.after_agent</code> 在 Run 结束后只保留用户输入和最终 assistant 回复，过滤 tool calls 与上传文件噪声，识别纠错 / 强化信号，然后把 conversation context 放入 <code>MemoryUpdateQueue</code>；队列按 <code>debounce_seconds</code> 合并同一 thread / user / agent 的更新，再由 <code>MemoryUpdater</code> 读取当前 memory、构造 memory-update prompt、解析模型返回的 JSON update，最后保存回 storage。</p>
+        <p>summarization 前的写回更紧急：<code>DeerFlowSummarizationMiddleware</code> 在删除旧消息前触发 <code>memory_flush_hook</code>，hook 对即将被摘要掉的消息做同样的过滤和纠错 / 强化检测，然后用 <code>queue.add_nowait()</code> 立即启动后台更新。这样旧消息即使马上被 summary 替换，也有机会先进入长期 memory；但 memory 更新仍是 best-effort 后台任务，不等同于父 Run checkpoint。</p>
+      </div>
+
+      <p>这样组织后，Prompt 组成可以被理解为“稳定系统层”的内部结构，而不是整个上下文工程。比如 Thinking Style、Clarification Rules、Subagent Section 属于稳定系统层；memory/current date 属于动态运行时层；完整 <code>SKILL.md</code> 则通常不在基础 prompt 中，而是在用户显式 slash activation 或模型读取 skill 文件时进入当前任务层或短期连续性层。</p>
+
+      <h3 id="prefix-caching">如何利用 Prefix Caching</h3>
+      <p>Prefix Caching 是上下文分层的直接工程收益：如果稳定系统层、工具能力层和较少变化的消息前缀能保持相同，provider 就可以复用前缀计算，降低成本和首 token 延迟。外部实践也指向同一原则：<a href="https://platform.openai.com/docs/guides/prompt-caching">OpenAI</a> 建议把静态或重复内容放在开头、动态内容放在末尾，并通过 <code>cached_tokens</code> 观测命中；<a href="https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching">Anthropic</a> 的 prompt cache 按 tools、system、messages 形成缓存层级；<a href="https://arxiv.org/abs/2601.06007">Don't Break the Cache</a> 在长程 agent 任务中观察到缓存策略会显著影响成本和 TTFT，尤其要避免把高变化工具结果纳入稳定缓存块。</p>
+
+      <div class="compare">
+        <div class="good">
+          <h3>DeerFlow 如何保住稳定前缀</h3>
+          <p>系统提示尽量由 Lead Agent prompt、custom agent <code>SOUL.md</code>、thinking style、clarification rules、subagent policy 和 skills summary 组成；current date、用户 memory、上传文件、完整 skill 内容和工具结果不直接写入 system prompt。这样 stable system / tools 可以先形成较稳定的前缀，动态上下文再通过消息层进入模型。</p>
+        </div>
+        <div class="warning">
+          <h3>哪些内容会破坏缓存</h3>
+          <p>memory snapshot、日期更新、recent raw messages、长工具输出、slash skill activation 和图片上下文都会改变消息前缀。它们不是不能进入模型，而是应该靠后放置、按预算裁剪，或者在后续轮次被 summary / memory 接管。</p>
+        </div>
+      </div>
+
+      <p>DeerFlow 的关键做法是把高变化运行时信息从 system prompt 中剥离出来。<code>DynamicContextMiddleware</code> 在首轮把完整 <code>&lt;system-reminder&gt;</code> 拆成一条隐藏 <code>HumanMessage</code> 和原始用户消息：reminder 中包含 current date 和按预算格式化后的 memory；原始用户内容则保留为可见 <code>HumanMessage</code>。同一天后续 turn 不重复注入完整 reminder，跨日期时只在当前 turn 增加轻量 date update。这样做不能让 memory 免费，但可以避免频繁变化的 memory 污染最稳定的 system prompt 前缀。</p>
+
+      <p>Provider 适配层还会进一步利用具体模型能力。Claude provider 会在请求 payload 上设置 <code>cache_control: {"type": "ephemeral"}</code>，候选包括 system text blocks、最近 <code>prompt_cache_size</code> 条 message block 和最后一个 tool definition。由于 Anthropic / Bedrock 对 cache breakpoint 有数量上限，代码只给最后几个候选打标，让更靠后的 breakpoint 覆盖更长 prefix，从而提高命中率。OAuth Anthropic 路径会禁用或剥离这些 cache marker，避免违反 provider 限制。</p>
+
+      <div class="note">
+        <h3>Prefix Cache 的边界</h3>
+        <p>Prefix Caching 只优化重复前缀的 provider 成本和延迟，不改变模型真正看到的上下文，也不等价于长期记忆。动态 memory 仍然会消耗输入窗口；如果 memory 太大，仍需要依赖 <code>max_injection_tokens</code> 和 summarization 策略控制体积。</p>
+        <p>同一个 thread 内，DynamicContext 采用首轮 frozen snapshot，后续 turn 不会因为后台 memory 更新而改写已经注入的 reminder，所以同线程的前缀相对稳定；但新的 Run / 新 thread 如果读到了更新后的 memory，memory 之后的消息前缀通常不能继续命中旧缓存，只有 memory 之前的 system / tools 等稳定部分还能复用。这是长期个性化和 prefix cache 之间的取舍。</p>
+      </div>
+
+      <h3 id="context-window">上下文窗口大小如何被感知</h3>
+      <p>DeerFlow 自己的 <code>ModelConfig</code> 主要描述 provider class、model name、输出参数、thinking 能力和视觉能力，并没有单独定义一个统一的 <code>context_window</code> 字段。上下文容量管理主要发生在 summarization middleware：它可以按消息数、绝对 token 数或模型输入窗口比例触发压缩。</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>触发类型</th>
+            <th>含义</th>
+            <th>可靠性边界</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>messages</code></td>
+            <td>消息条数达到阈值后压缩，例如 50 条消息。</td>
+            <td>不依赖模型 profile，最稳定，但不能反映 tool output 特别长的情况。</td>
+          </tr>
+          <tr>
+            <td><code>tokens</code></td>
+            <td>估算 token 或模型上报 token 达到阈值后压缩。</td>
+            <td>适合模型 profile 不完整的 provider，需要人工配置安全阈值。</td>
+          </tr>
+          <tr>
+            <td><code>fraction</code></td>
+            <td>达到模型 <code>max_input_tokens</code> 的某个比例后压缩，例如 0.8。</td>
+            <td>依赖底层 LangChain 模型 <code>profile.max_input_tokens</code>；如果 profile 缺失，初始化会要求改用绝对 token 阈值或显式提供 profile。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>因此，DeerFlow 不是通过每次请求向 provider 查询真实窗口大小，而是把“窗口感知”建立在模型 profile、近似 token counter、模型返回的 usage metadata 和配置阈值之上。对自定义 provider 来说，最稳妥的配置是先用 <code>tokens</code> 或 <code>messages</code> 阈值，只有当模型 profile 明确提供 <code>max_input_tokens</code> 时再使用 <code>fraction</code>。</p>
+
+      <h3 id="context-compression">上下文压缩策略</h3>
+      <p>自动压缩由 <code>DeerFlowSummarizationMiddleware</code> 在 <code>before_model</code> 阶段执行。它先确保消息有 id，再计算当前 token 量；满足 trigger 后，选择一个 cutoff，把更早的消息交给 summary 模型压缩，然后用 <code>RemoveMessage(REMOVE_ALL_MESSAGES)</code> 清空旧消息，写入一条隐藏的 <code>HumanMessage(name="summary")</code>，再拼回需要保留的近期消息。</p>
+
+      <div class="compare">
+        <div class="good">
+          <h3>保留什么</h3>
+          <p>根据 <code>keep</code> 保留最近若干消息、若干 token 或窗口比例；cutoff 会避免切断 AIMessage 与后续 ToolMessage 的配对关系；动态上下文 reminder 会被移到 preserved messages，避免 summary 消息被误判成新的用户首条消息。</p>
+        </div>
+        <div class="warning">
+          <h3>压缩什么</h3>
+          <p>cutoff 之前的历史被摘要成一条 summary message。summary 模型调用带 <code>TAG_NOSTREAM</code>，避免摘要过程的 token 被前端误当作正常 assistant 流式输出。</p>
+        </div>
+      </div>
+
+      <p>DeerFlow 还对 skills 做了特殊“救援”。如果早期消息里包含最近读取的 skill 文件，middleware 会识别读取 skill 文件的 AI/tool message bundle，并在 <code>preserve_recent_skill_count</code>、<code>preserve_recent_skill_tokens</code> 和单 skill token cap 范围内把它们从待摘要区域移到保留区。这样做的原因是：完整 <code>SKILL.md</code> 往往是本轮任务的执行规范，过早摘要会丢掉精确步骤和约束。</p>
+
+      <p>压缩的重点不是“越短越好”，而是在 summary、近期消息、动态上下文、skill 文件和 tool pair 一致性之间找平衡。它不会逐条判断每个工具尝试是否有价值，而是把 cutoff 之前的历史统一摘要，把 cutoff 之后的近期因果链原样保留。</p>
+
+      <h3 id="context-pruning">上下文剪枝策略</h3>
+      <p>剪枝和压缩解决的是不同问题。压缩是把旧历史改写成 summary；剪枝是在模型下一次调用前控制“哪些能力、哪些结果、哪些错误细节还值得继续占窗口”。从 DeerFlow 的实现看，剪枝不是一个统一的 semantic reranker，而是散落在 tool schema、tool result、异常恢复、summary 分区和 memory 注入预算里的多层防护。</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>剪枝位置</th>
+            <th>具体机制</th>
+            <th>对工具调用过程的影响</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>工具 schema 面</td>
+            <td><code>DeferredToolFilterMiddleware</code> 在 <code>wrap_model_call</code> 里从 <code>request.tools</code> 移除尚未 promoted 的 deferred tools。</td>
+            <td>模型不是一开始就看到所有 MCP 工具。未 promoted 的工具如果被直接调用，会返回错误 ToolMessage，要求先用 <code>tool_search</code> 暴露工具 schema。</td>
+          </tr>
+          <tr>
+            <td>工具结果面</td>
+            <td><code>ToolOutputBudgetMiddleware</code> 对超长 <code>ToolMessage</code> 做预算控制：优先把完整结果 externalize 到 outputs 文件，只把 head / tail preview 和文件路径放回上下文；持久化不可用时退化为 head+tail 截断。</td>
+            <td>工具调用记录仍然存在，但大结果不会完整拼进后续模型输入。模型需要时可以再用 <code>read_file</code> 按行读取局部内容。</td>
+          </tr>
+          <tr>
+            <td>异常恢复面</td>
+            <td><code>DanglingToolCallMiddleware</code> 在模型调用前修复缺失 ToolMessage 的 tool call；对 malformed <code>write_file</code> 这类错误只保留短错误说明，避免把大块非法参数重新塞回上下文。</td>
+            <td>失败尝试不会完全消失，因为 provider 需要 AIMessage / ToolMessage 配对；但错误细节会被压短，保留“这次尝试失败了、不要重复同样方式”的恢复信号。</td>
+          </tr>
+          <tr>
+            <td>历史分区面</td>
+            <td>summarization 的 <code>keep</code> 只保留最近若干消息 / token / 窗口比例，并避免切断 AIMessage 与 ToolMessage pair；较早工具尝试进入 summary，而不是原样保留。</td>
+            <td>近期工具尝试通常会继续作为原始上下文存在；更早的探索、失败和中间发现会被折叠进 summary，细节是否保留取决于摘要质量。</td>
+          </tr>
+          <tr>
+            <td>任务相关性例外</td>
+            <td>最近读取的 skill 文件会被 skill rescue 识别为 AI/tool bundle，并按数量、总 token、单 skill token cap 从待摘要区域移到 preserved messages。</td>
+            <td>不是所有旧工具结果都同等被丢进 summary。对当前执行规范强相关的 skill 读取结果，会优先保留原文；超过 cap 或重复读取的 skill 则不再 rescue。</td>
+          </tr>
+          <tr>
+            <td>长期记忆面</td>
+            <td>memory 注入通过 <code>max_injection_tokens</code>、confidence 排序和格式化预算选择可进入 <code>&lt;memory&gt;</code> 的内容。</td>
+            <td>长期 memory 不是越多越好。与当前用户 / agent 相关、置信度较高的内容优先进入，其他内容留在存储中，不进入本轮模型窗口。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="note">
+        <h3>工具尝试会不会都进入上下文</h3>
+        <p>短答案是：在同一个 Run 的近期窗口里，工具调用的因果链通常会被保留，因为 LLM provider 要求 AIMessage 的 tool calls 后面有对应 ToolMessage，模型也需要知道刚才尝试过什么。但 DeerFlow 不会把所有工具输出都以完整原文长期拼接下去。超长结果会被 externalize / 截断，旧工具尝试会在 summarization 后变成 summary，未激活工具的 schema 不会提前暴露，错误恢复消息也会刻意压短。</p>
+        <p>因此 DeerFlow 当前更像“结构化剪枝 + 预算剪枝”，而不是“按任务相关性对每条历史做语义筛选”。真正按相关性丢弃低价值 context 的地方主要体现在 skill rescue、memory confidence 排序、deferred tool 暴露和工具输出预算上；普通工具尝试是否重要，更多交给近期窗口和 summary 模型间接处理。</p>
+      </div>
+
+      <h3 id="memory-interaction">与记忆系统的交互</h3>
+      <p>DeerFlow 的 memory 有两条方向相反的路径：进入模型前的注入，以及模型完成后的异步更新。</p>
+
+      <svg class="loop-svg" viewBox="0 0 980 360" role="img" aria-label="DeerFlow 记忆系统与 Agent Loop 的交互图，展示记忆注入、运行后更新、摘要前 flush 和下次运行再次注入">
+        <defs>
+          <marker id="arrow-memory" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+
+        <rect x="55" y="72" width="180" height="72" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="145" y="102" text-anchor="middle" class="svg-title">Memory Store</text>
+        <text x="145" y="124" text-anchor="middle" class="svg-small">user / agent profile</text>
+
+        <rect x="305" y="72" width="190" height="72" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="400" y="102" text-anchor="middle" class="svg-title">DynamicContext</text>
+        <text x="400" y="124" text-anchor="middle" class="svg-small">inject &lt;memory&gt;</text>
+
+        <rect x="565" y="72" width="180" height="72" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="655" y="102" text-anchor="middle" class="svg-title">Lead Agent Run</text>
+        <text x="655" y="124" text-anchor="middle" class="svg-small">messages + tools</text>
+
+        <rect x="565" y="230" width="180" height="72" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+        <text x="655" y="260" text-anchor="middle" class="svg-title">MemoryMiddleware</text>
+        <text x="655" y="282" text-anchor="middle" class="svg-small">after_agent queue</text>
+
+        <rect x="305" y="230" width="190" height="72" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="400" y="260" text-anchor="middle" class="svg-title">Memory Queue</text>
+        <text x="400" y="282" text-anchor="middle" class="svg-small">debounce + LLM update</text>
+
+        <rect x="55" y="230" width="180" height="72" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+        <text x="145" y="260" text-anchor="middle" class="svg-title">Summarization</text>
+        <text x="145" y="282" text-anchor="middle" class="svg-small">flush before remove</text>
+
+        <line x1="235" y1="108" x2="305" y2="108" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-memory)"></line>
+        <text x="270" y="94" text-anchor="middle" class="svg-small">read + budget</text>
+
+        <line x1="495" y1="108" x2="565" y2="108" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-memory)"></line>
+        <text x="530" y="94" text-anchor="middle" class="svg-small">hidden reminder</text>
+
+        <line x1="655" y1="144" x2="655" y2="230" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-memory)"></line>
+        <text x="706" y="190" text-anchor="middle" class="svg-small">final reply</text>
+
+        <line x1="565" y1="266" x2="495" y2="266" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-memory)"></line>
+        <text x="530" y="252" text-anchor="middle" class="svg-small">filtered turns</text>
+
+        <line x1="305" y1="266" x2="235" y2="266" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-memory)"></line>
+        <text x="270" y="252" text-anchor="middle" class="svg-small">summarize old turns</text>
+
+        <path d="M145 230 C145 178, 145 178, 145 144" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-memory)"></path>
+        <text x="92" y="190" text-anchor="middle" class="svg-small">persist</text>
+
+        <path d="M400 230 C400 182, 205 182, 145 144" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-memory)"></path>
+        <text x="292" y="176" text-anchor="middle" class="svg-small">apply updates</text>
+
+        <path d="M145 72 C145 40, 655 40, 655 72" fill="none" stroke="#5f7f55" stroke-width="2" marker-end="url(#arrow-memory)"></path>
+        <text x="400" y="33" text-anchor="middle" class="svg-label">next run sees updated memory</text>
+      </svg>
+
+      <table>
+        <thead>
+          <tr>
+            <th>方向</th>
+            <th>入口</th>
+            <th>上下文意义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>注入</td>
+            <td><code>DynamicContextMiddleware</code> 调用 <code>_get_memory_context()</code></td>
+            <td>读取当前用户、当前 agent 的 memory，格式化成 <code>&lt;memory&gt;</code> 块，并受 <code>memory.max_injection_tokens</code> 限制。</td>
+          </tr>
+          <tr>
+            <td>预算</td>
+            <td><code>format_memory_for_injection()</code></td>
+            <td>优先注入 user context、history summary，再按 confidence 排序加入 facts；超过预算时停止加入或截断。</td>
+          </tr>
+          <tr>
+            <td>更新</td>
+            <td><code>MemoryMiddleware.after_agent</code></td>
+            <td>Run 结束后只抽取用户输入和最终 assistant 回复，过滤 tool calls 和上传文件噪声，排入 debounce 队列异步更新 memory。</td>
+          </tr>
+          <tr>
+            <td>压缩前 flush</td>
+            <td><code>memory_flush_hook</code></td>
+            <td>在旧消息被 summarization 删除前，把可用于记忆的用户/最终回复先排入 memory 队列，避免长期信息只存在于即将被摘要掉的短期上下文中。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>这里要注意 memory 和 summary 的分工：summary 是同一个 thread 内的短期压缩，目标是让当前对话继续；memory 是跨 run / 跨 thread 的长期画像，目标是把用户偏好、纠错、强化信号和背景事实沉淀下来。summary 会回到父 Run 的 messages，memory 则通过后台队列更新存储，并在后续 Run 由动态上下文再次注入。</p>
+
+      <h3 id="thinking-control">Thinking 控制</h3>
+      <p>DeerFlow 的 CoT 控制更准确地说是“模型 reasoning 模式控制”，而不是“读取和管理隐藏思维链”。代码里有三个层次：</p>
+      <table>
+        <thead>
+          <tr>
+            <th>层次</th>
+            <th>机制</th>
+            <th>边界</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>请求层</td>
+            <td>客户端或 channel 可以传入 <code>thinking_enabled</code> 和 <code>reasoning_effort</code>。</td>
+            <td>这是意图开关，不保证模型一定支持。</td>
+          </tr>
+          <tr>
+            <td>模型配置层</td>
+            <td><code>supports_thinking</code>、<code>when_thinking_enabled</code>、<code>when_thinking_disabled</code>、<code>thinking</code> 决定如何把开关映射为 provider 参数。</td>
+            <td>不支持 thinking 的模型会降级，避免错误参数污染调用。</td>
+          </tr>
+          <tr>
+            <td>Prompt 行为层</td>
+            <td><code>&lt;thinking_style&gt;</code> 要求模型先分析请求、识别不确定性、再行动。</td>
+            <td>这是行为约束，不是可审计的隐藏 CoT 存储。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>动态上下文由 <code>DynamicContextMiddleware</code> 负责。它把当前日期和可注入 memory 包进隐藏 <code>&lt;system-reminder&gt;</code>，作为 <code>HumanMessage</code> 写入消息序列；如果会话跨过日期边界，它会补一个轻量日期更新提醒。这个设计让系统提示保持稳定，同时允许每个线程获得最新运行时上下文。</p>
+      <p>澄清也是上下文控制的一部分。<code>ClarificationMiddleware</code> 在尾部拦截 <code>ask_clarification</code> 工具调用，并通过 LangGraph interrupt / END 路径让本轮停止，等待用户补充。这意味着 DeerFlow 不是“边做边问”，而是把澄清作为进入行动前的控制点。</p>
+    </section>
+
+    <section class="section" id="capability-surface">
+      <h2>能力面分层：Tools、Skills 与 MCP</h2>
+      <p>DeerFlow 的扩展能力容易被混在一起讲。更清晰的分法是：Tools 是模型可以调用的执行接口，Skills 是指导 agent 如何完成任务的知识包，MCP 是把外部工具接进 Tools 面的协议。三者相互配合，但不处在同一层。</p>
+
+      <svg class="loop-svg" viewBox="0 0 980 320" role="img" aria-label="Tools、Skills、MCP 的关系图，展示 MCP 提供工具，skills 约束和指导工具使用，tools 进入模型 schema">
+        <defs>
+          <marker id="arrow-cap" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+
+        <rect x="50" y="80" width="190" height="80" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="145" y="112" text-anchor="middle" class="svg-title">MCP Servers</text>
+        <text x="145" y="135" text-anchor="middle" class="svg-small">stdio / sse / http</text>
+
+        <rect x="300" y="80" width="190" height="80" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="395" y="112" text-anchor="middle" class="svg-title">Tools</text>
+        <text x="395" y="135" text-anchor="middle" class="svg-small">schemas bound to model</text>
+
+        <rect x="550" y="80" width="190" height="80" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="645" y="112" text-anchor="middle" class="svg-title">Skills</text>
+        <text x="645" y="135" text-anchor="middle" class="svg-small">workflow instructions</text>
+
+        <rect x="360" y="220" width="250" height="62" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+        <text x="485" y="247" text-anchor="middle" class="svg-title">Model Prompt Surface</text>
+        <text x="485" y="268" text-anchor="middle" class="svg-small">tool schemas + skill guidance</text>
+
+        <line x1="240" y1="120" x2="300" y2="120" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-cap)"></line>
+        <text x="270" y="104" text-anchor="middle" class="svg-small">discover</text>
+        <line x1="395" y1="160" x2="455" y2="220" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-cap)"></line>
+        <line x1="645" y1="160" x2="515" y2="220" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-cap)"></line>
+        <path d="M550 120 C520 120, 520 120, 490 120" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-cap)"></path>
+        <text x="520" y="104" text-anchor="middle" class="svg-small">allowed-tools</text>
+      </svg>
+
+      <h3 id="tools">Tools 是执行接口</h3>
+      <p><code>get_available_tools()</code> 是 DeerFlow 工具面的聚合点。它从配置加载工具对象，补上内置工具，再加入 MCP、ACP、视觉工具和 subagent 工具。工具最终是否进入模型 schema，还会受到模型能力、sandbox 安全策略、tool group、skill allowed-tools 和 deferred tool search 的共同影响。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>工具来源</th>
+            <th>代表能力</th>
+            <th>进入条件</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Config tools</td>
+            <td>配置文件中声明的 bash、文件、搜索、社区工具等。</td>
+            <td>由 <code>config.tools</code> 和 <code>tool_groups</code> 过滤；LocalSandboxProvider 下默认不暴露 host bash。</td>
+          </tr>
+          <tr>
+            <td>Built-in tools</td>
+            <td><code>present_files</code>、<code>ask_clarification</code>、可选的 <code>skill_manage</code>。</td>
+            <td>基础内置能力；skill evolution 启用时才加入 skill 管理工具。</td>
+          </tr>
+          <tr>
+            <td>Vision tools</td>
+            <td><code>view_image</code>。</td>
+            <td>只有当前模型配置 <code>supports_vision=true</code> 时加入。</td>
+          </tr>
+          <tr>
+            <td>MCP tools</td>
+            <td>外部 MCP server 暴露的工具。</td>
+            <td>来自启用的 <code>mcpServers</code>，可被 deferred tool search 延迟绑定。</td>
+          </tr>
+          <tr>
+            <td>ACP tools</td>
+            <td><code>invoke_acp_agent</code>。</td>
+            <td>存在 ACP agent 配置时加入。</td>
+          </tr>
+          <tr>
+            <td>Subagent tools</td>
+            <td><code>task</code>。</td>
+            <td>只有 <code>subagent_enabled=true</code> 时加入 Lead Agent；subagent 内部默认不再暴露它。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="skills">Skills 是工作流知识</h3>
+      <p>Skill 的核心文件是 <code>SKILL.md</code>。DeerFlow 支持 <code>public</code> 和 <code>custom</code> 两类 skill，元数据来自 YAML frontmatter，至少包含 <code>name</code> 和 <code>description</code>，可选 <code>license</code> 和 <code>allowed-tools</code>。启用状态来自 <code>extensions_config.json</code> 的 <code>skills</code> 字段；没有显式配置时，public 和 custom skill 默认可启用。</p>
+      <p>基础 prompt 中通常只注入技能摘要，避免一次性把所有 <code>SKILL.md</code> 全量塞入上下文。真正需要强制使用某个 skill 时，用户可以输入 <code>/skill-name task</code>。<code>SkillActivationMiddleware</code> 会解析 slash 引用，验证 skill 安装和启用状态，读取完整 <code>SKILL.md</code>，并作为隐藏当前轮上下文注入模型。</p>
+      <div class="note">
+        <h3>allowed-tools 如何生效</h3>
+        <p><code>allowed-tools</code> 不是 skill 自己执行工具，也不是 slash activation 之后才临时生效的开关。它是 agent 构建阶段的工具面 allowlist：<code>parse_allowed_tools()</code> 从 <code>SKILL.md</code> frontmatter 解析字段；<code>_load_enabled_skills_for_tool_policy()</code> 读取当前 agent 可用的 enabled skills；<code>filter_tools_by_skill_allowed_tools()</code> 再过滤 <code>get_available_tools()</code> 返回的工具列表。</p>
+        <p>规则是“只要至少一个当前可用 skill 显式声明了 <code>allowed-tools</code>，就进入 allowlist 模式”。DeerFlow 会取所有显式声明的并集；未声明该字段的 legacy skill 不贡献工具名；显式写空列表表示这个 skill 不贡献任何工具。如果没有任何 skill 声明 <code>allowed-tools</code>，则回到 legacy allow-all 行为。这个过滤发生在 <code>assemble_deferred_tools()</code> 之前，所以 deferred MCP catalog 也只能包含已经通过 skill policy 的工具。</p>
+      </div>
+
+      <h3 id="dynamic-capability-loading">动态能力加载：tool_search 与 skill_manage</h3>
+      <p>DeerFlow 里的“动态加载”有两种完全不同的含义：<code>tool_search</code> 是把已发现但暂缓暴露的 MCP tool schema 按需提升到模型可见面；<code>skill_manage</code> 是让 agent 修改 custom skill 存储，并刷新后续 prompt / agent 构建可见的 skill 索引。前者改变当前 thread 的 promoted tool state，后者改变持久化 skill 文件。</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>能力</th>
+            <th>实现路径</th>
+            <th>生效边界</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>tool_search</code></td>
+            <td><code>get_available_tools()</code> 会把 MCP 工具标记为 MCP-sourced；agent 构建时先做 skill allowed-tools 过滤，再由 <code>assemble_deferred_tools()</code> 把剩余 MCP 工具放进 <code>DeferredToolCatalog</code>，并追加一个闭包形式的 <code>tool_search</code> 工具。</td>
+            <td>不是运行中重新发现 MCP server，而是从本次 agent build 的 deferred catalog 中查询。system prompt 只列出 <code>&lt;available-deferred-tools&gt;</code> 名称，完整 schema 暂不绑定给模型。</td>
+          </tr>
+          <tr>
+            <td>工具 promotion</td>
+            <td>模型调用 <code>tool_search</code> 后，工具根据 query 匹配 catalog，返回最多 5 个完整 OpenAI function schema，并通过 LangGraph <code>Command(update=...)</code> 写入 <code>state["promoted"]</code>。</td>
+            <td><code>ThreadState.merge_promoted</code> 按 <code>catalog_hash</code> 合并 promoted names；catalog hash 变化时丢弃旧 promotion，避免同名工具漂移后被误暴露。</td>
+          </tr>
+          <tr>
+            <td>schema 过滤</td>
+            <td><code>DeferredToolFilterMiddleware</code> 在 <code>wrap_model_call</code> 中从 <code>request.tools</code> 移除尚未 promoted 的 deferred tools；在 <code>wrap_tool_call</code> 中阻止直接调用未 promoted 工具。</td>
+            <td>ToolNode 仍持有这些工具用于执行路由，但 LLM 只能看到 active tools 加已 promoted 的 deferred tools。若直接调用未 promoted 工具，会得到错误 ToolMessage，提示先调用 <code>tool_search</code>。</td>
+          </tr>
+          <tr>
+            <td><code>skill_manage</code></td>
+            <td><code>skill_evolution.enabled</code> 打开时，<code>get_available_tools()</code> 才把 <code>skill_manage</code> 加入 built-in tools。它支持 <code>create</code>、<code>edit</code>、<code>patch</code>、<code>delete</code>、<code>write_file</code>、<code>remove_file</code>，只操作 <code>skills/custom/</code>。</td>
+            <td>写入前会校验 skill 名称、校验 <code>SKILL.md</code> frontmatter、做安全扫描，并用 per-skill lock 串行化同名 skill 修改；<code>SKILL.md</code> 的 create / edit / patch / delete 会刷新 skills system prompt cache。</td>
+          </tr>
+          <tr>
+            <td>Skill 热更新边界</td>
+            <td><code>skill_manage</code> 改的是存储和 prompt cache，不会重新绑定当前已创建 agent 的工具列表。</td>
+            <td>新 skill 摘要、allowed-tools 政策和完整 skill 内容通常在后续 agent 构建、后续 Run，或显式 slash activation 读取文件时进入模型上下文；当前工具面不会因为刚改了 <code>allowed-tools</code> 就立刻重算。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="mcp">MCP 是外部工具协议</h3>
+      <p>MCP 接入由 <code>extensions_config.json</code> 中的 <code>mcpServers</code> 定义。每个 server 可以是 <code>stdio</code>、<code>sse</code> 或 <code>http</code>，并携带 command、args、env、url、headers、OAuth 和自定义 interceptor。DeerFlow 通过 <code>langchain-mcp-adapters</code> 做工具发现，并把发现到的工具转成 LangChain <code>BaseTool</code>。</p>
+      <p>DeerFlow 在 MCP 上做了几层产品化增强：</p>
+      <ul>
+        <li><strong>工具缓存：</strong>MCP tools 会缓存起来，避免每次 agent 构造都重新发现；配置文件修改后会触发 cache stale 和重置。</li>
+        <li><strong>会话池：</strong>stdio MCP server 会按 <code>user_id:thread_id</code> 复用 session，既保留同一线程内的状态，又避免跨用户串状态。</li>
+        <li><strong>工作区绑定：</strong>stdio MCP 进程的 cwd 和临时目录被固定到线程 user-data 目录下，便于把截图、临时文件等产物映射回 <code>/mnt/user-data</code>。</li>
+        <li><strong>路径重写：</strong>MCP 返回的本地文件路径会被保守地转换为 DeerFlow 可读的虚拟路径，避免前端或 sandbox 看到不可达的 host 路径。</li>
+        <li><strong>Deferred tools：</strong>MCP 工具可以先被放入 deferred catalog，模型只通过 <code>tool_search</code> 按需提升工具，减少一次性 schema 膨胀。</li>
+      </ul>
+
+      <p class="quote">MCP 提供外部工具，Skills 提供使用工具的策略和约束，Tools 是最终被模型绑定和调用的执行接口。把这三层分开，才能解释 DeerFlow 为什么既能扩展工具，又能控制工具面。</p>
+    </section>
+
+    <section class="section" id="multi-agent">
+      <h2>Custom Agent 与 Subagent</h2>
+      <p>DeerFlow 里有两种容易混淆的“多 agent”概念：Custom Agent 和 Subagent。Custom Agent 是 Lead Agent 的配置形态，决定本次 Run 的身份、模型、工具组和 skill 白名单；Subagent 是 Lead Agent 在执行过程中通过 <code>task</code> 工具派发出去的辅助执行者。</p>
+
+      <h3 id="custom-agent">Custom Agent：改变 Lead Agent 的配置</h3>
+      <p>Custom Agent 通过 <code>agent_name</code> 选择。它会读取 per-user 目录下的 agent 配置，优先使用当前用户隔离路径，并兼容旧的共享布局。配置文件描述 agent 的名称、说明、模型、工具组和 skills；<code>SOUL.md</code> 则作为该 agent 的人格、边界和行为约束注入系统提示。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>配置项</th>
+            <th>作用</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>model</code></td>
+            <td>指定该 custom agent 默认使用的模型；请求中显式模型仍可覆盖。</td>
+          </tr>
+          <tr>
+            <td><code>tool_groups</code></td>
+            <td>限制 <code>get_available_tools()</code> 从哪些工具组加载工具。</td>
+          </tr>
+          <tr>
+            <td><code>skills</code></td>
+            <td><code>null</code> 表示继承所有启用 skills，空列表表示禁用 skills，列表表示只允许指定 skills。</td>
+          </tr>
+          <tr>
+            <td><code>SOUL.md</code></td>
+            <td>进入系统提示，定义 agent 的身份、语气、职责和行为边界。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="subagent">Subagent：在 Loop 中被 task 派发</h3>
+      <p>Subagent 不是一个硬编码 router 自动触发的分支。只有当本次 Run 的 <code>subagent_enabled=true</code> 时，Lead Agent 才能看见 <code>task</code> 工具；是否调用它，由模型根据 prompt、任务复杂度和可拆解程度决定。</p>
+      <div class="compare">
+        <div class="good">
+          <h3>适合派发 subagent</h3>
+          <p>复杂研究、多信息源并行、大代码库多区域探索、多角度比较、需要把 verbose output 隔离出主上下文的任务。</p>
+        </div>
+        <div class="bad">
+          <h3>不适合派发 subagent</h3>
+          <p>读取单个文件、执行单个命令、必须先问用户的问题、强顺序依赖任务、对话历史或元讨论。</p>
+        </div>
+      </div>
+
+      <p><code>task</code> 工具收到模型的 tool call 后，会查找 subagent 类型，合并父 agent 的模型、工具组和 skills 限制，构造 <code>SubagentExecutor</code>，再用 <code>tool_call_id</code> 作为后台 <code>task_id</code> 执行。这里不会向 RunManager 再创建一个新的 RunRecord：runtime 层仍然只有父 Run；subagent task 只是在父 Run 的工具调用期间登记到进程内后台任务表，并把进度和结果回流到父 Run。</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>标识</th>
+            <th>归属</th>
+            <th>作用</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>run_id</code></td>
+            <td>父 Run</td>
+            <td>由 RunManager 管理，用于状态、取消、checkpoint、StreamBridge 订阅和 SSE 输出。</td>
+          </tr>
+          <tr>
+            <td><code>tool_call_id</code></td>
+            <td>Lead Agent 的 <code>task</code> 工具调用</td>
+            <td>模型输出中的工具调用 id，是前端 subtask card、ToolMessage 和后台任务之间的关联键。</td>
+          </tr>
+          <tr>
+            <td><code>task_id</code></td>
+            <td>SubagentExecutor 后台任务</td>
+            <td>直接复用 <code>tool_call_id</code>，登记到 <code>_background_tasks</code>；它不是新的 runtime run id。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <svg class="loop-svg" viewBox="0 0 980 470" role="img" aria-label="Subagent task 派发和 StreamBridge 可见性时序图">
+        <defs>
+          <marker id="arrow-sub" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+
+        <rect x="35" y="35" width="135" height="54" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="102" y="58" text-anchor="middle" class="svg-title">Frontend</text>
+        <text x="102" y="77" text-anchor="middle" class="svg-small">useStream</text>
+
+        <rect x="215" y="35" width="135" height="54" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="282" y="58" text-anchor="middle" class="svg-title">Run Worker</text>
+        <text x="282" y="77" text-anchor="middle" class="svg-small">parent run_id</text>
+
+        <rect x="395" y="35" width="135" height="54" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="462" y="58" text-anchor="middle" class="svg-title">Lead Agent</text>
+        <text x="462" y="77" text-anchor="middle" class="svg-small">agent loop</text>
+
+        <rect x="575" y="35" width="135" height="54" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+        <text x="642" y="58" text-anchor="middle" class="svg-title">task Tool</text>
+        <text x="642" y="77" text-anchor="middle" class="svg-small">tool_call_id</text>
+
+        <rect x="755" y="35" width="170" height="54" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="840" y="58" text-anchor="middle" class="svg-title">Subagent Task</text>
+        <text x="840" y="77" text-anchor="middle" class="svg-small">task_id = tool_call_id</text>
+
+        <line x1="102" y1="100" x2="102" y2="430" stroke="#e4dbcf" stroke-width="2"></line>
+        <line x1="282" y1="100" x2="282" y2="430" stroke="#e4dbcf" stroke-width="2"></line>
+        <line x1="462" y1="100" x2="462" y2="430" stroke="#e4dbcf" stroke-width="2"></line>
+        <line x1="642" y1="100" x2="642" y2="430" stroke="#e4dbcf" stroke-width="2"></line>
+        <line x1="840" y1="100" x2="840" y2="430" stroke="#e4dbcf" stroke-width="2"></line>
+
+        <line x1="530" y1="132" x2="575" y2="132" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-sub)"></line>
+        <text x="552" y="121" text-anchor="middle" class="svg-small">1. task call</text>
+
+        <line x1="710" y1="174" x2="755" y2="174" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-sub)"></line>
+        <text x="732" y="163" text-anchor="middle" class="svg-small">2. execute_async</text>
+
+        <rect x="760" y="205" width="160" height="52" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="840" y="226" text-anchor="middle" class="svg-title">agent.astream</text>
+        <text x="840" y="245" text-anchor="middle" class="svg-small">capture AI messages</text>
+
+        <path d="M840 257 C840 292, 686 292, 650 292" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-sub)"></path>
+        <text x="746" y="282" text-anchor="middle" class="svg-small">3. poll result.ai_messages</text>
+
+        <path d="M642 306 C570 338, 365 338, 290 338" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-sub)"></path>
+        <text x="466" y="328" text-anchor="middle" class="svg-small">4. get_stream_writer: task_running</text>
+
+        <path d="M282 352 C225 382, 158 382, 110 382" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-sub)"></path>
+        <text x="195" y="372" text-anchor="middle" class="svg-small">5. StreamBridge custom SSE</text>
+
+        <path d="M642 410 C595 440, 512 440, 468 410" fill="none" stroke="#5f7f55" stroke-width="2" marker-end="url(#arrow-sub)"></path>
+        <text x="552" y="438" text-anchor="middle" class="svg-small">6. final ToolMessage to Lead</text>
+      </svg>
+
+      <ol class="flow-steps">
+        <li>
+          <h4>1. Lead Agent 触发 <code>task</code> 工具</h4>
+          <p>Lead Agent 的模型输出 <code>name=task</code> 的 tool call，参数里包含 <code>description</code>、<code>prompt</code> 和 <code>subagent_type</code>。这个动作仍发生在父 Run 的 agent loop 内。</p>
+        </li>
+        <li>
+          <h4>2. <code>task</code> 工具创建后台 subagent task</h4>
+          <p><code>task_tool</code> 创建 <code>SubagentExecutor</code>，用 <code>execute_async(prompt, task_id=tool_call_id)</code> 启动后台执行。后台任务登记在 <code>_background_tasks</code>，并不进入 RunManager，也没有自己的 <code>run_id</code>、checkpoint 或独立 SSE stream。</p>
+        </li>
+        <li>
+          <h4>3. Subagent 内部执行自己的 agent loop</h4>
+          <p>SubagentExecutor 会重新组装一个 agent，注入自己的 system prompt、skills、tools、thread data 和 sandbox，然后用 <code>agent.astream(..., stream_mode="values")</code> 执行。它捕获新产生的 <code>AIMessage</code>，写入后台 task result，供父级 <code>task</code> 工具轮询。</p>
+        </li>
+        <li>
+          <h4>4. 实时进度借用父 Run 的 stream</h4>
+          <p><code>task</code> 工具通过 <code>get_stream_writer()</code> 写出 <code>task_started</code>、<code>task_running</code>、<code>task_completed</code>、<code>task_failed</code> 等 payload。Run worker 把这些 payload 作为 LangGraph <code>custom</code> stream chunk 发布到父 <code>run_id</code> 对应的 StreamBridge。</p>
+        </li>
+        <li>
+          <h4>5. 前端用 custom event 更新 subtask card</h4>
+          <p>Gateway 订阅同一个 <code>run_id</code> 的 StreamBridge，并把 <code>custom</code> 事件通过 SSE 发到浏览器。前端 <code>useStream</code> 的 <code>onCustomEvent</code> 接收 <code>task_running</code>，按 <code>task_id</code> 更新 <code>SubtaskContext.latestMessage</code>，于是用户能看到 subagent 的流式执行过程。</p>
+        </li>
+        <li>
+          <h4>6. 终态回到普通消息流</h4>
+          <p>subagent 完成后，<code>task</code> 工具返回 <code>Task Succeeded</code>、<code>Task failed</code>、<code>Task timed out</code> 等文本，LangGraph 把它变成父 Run 消息历史中的 <code>ToolMessage</code>。前端用 AIMessage 里的 <code>task</code> tool call 创建卡片，再用匹配的 ToolMessage 和 <code>additional_kwargs.subagent_status</code> 更新终态。</p>
+        </li>
+      </ol>
+
+      <p class="quote">因此，subagent task 是父 Run 里的后台工具任务，而不是一个新的 runtime Run。StreamBridge 只按父 <code>run_id</code> 发布和订阅事件；subagent 的可见性来自 <code>task</code> 工具把后台执行过程转写成父 Run 的 <code>custom</code> stream 事件。</p>
+
+      <div class="warning">
+        <h3>关键边界：subagent task 不是可恢复任务</h3>
+        <p>SubagentExecutor 创建内部 agent 时不启用独立 checkpointer，后台任务状态也只存在于进程内 <code>_background_tasks</code>。因此 subagent 的中间 <code>AIMessage</code>、运行状态和 <code>task_running</code> 流式事件不会形成可恢复 checkpoint；服务重启、worker 丢失或后台任务被清理后，不能像父 Run 一样从 RunStore 恢复继续执行。</p>
+        <p>真正会持久化的是父 Run 消息历史里的 <code>task</code> tool call 和最终 <code>ToolMessage</code>。如果最终 ToolMessage 已经写回，前端可以重建 subtask 的完成态；如果只进行到中间流式阶段，则这些中间过程主要是 live 可见性，不是 durable state。</p>
+      </div>
+
+      <p>Subagent 也有明确边界。<code>SubagentLimitMiddleware</code> 会裁剪一次模型输出中过多的 <code>task</code> 调用；subagent 内部调用 <code>get_available_tools()</code> 时会把 <code>subagent_enabled</code> 设为 false，避免 subagent 再递归派发 subagent；token usage 会按 task tool call 汇总回父 Run，以便观测成本。</p>
+      <p>这个 token 回流不是简单把子任务成本加到总数里。<code>task</code> 工具会按 <code>tool_call_id</code> 暂存 subagent usage；<code>TokenUsageMiddleware</code> 再从对应 <code>ToolMessage</code> 向前找到派发它的 AIMessage，把子任务 token 合并到这一步的 <code>usage_metadata</code>。因此前端或日志既能看到父 Run 的总成本，也能把成本归因到“哪一次模型输出派发了哪些子任务”。</p>
+    </section>
+
+    <section class="section" id="middleware-loop">
+      <h2>Middleware 如何改变 Loop</h2>
+      <p>Middleware 不应该只被理解成一串注册列表。它们真正重要的地方在于：每个 middleware 都在 agent loop 的某个切面上改变 state、messages、tool schemas、tool execution、model output 或 run events。按职责分组，比按编号背顺序更容易理解。</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>切面</th>
+            <th>代表 Middleware</th>
+            <th>对服务端 Agent 的意义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>进入 loop 前准备现场</td>
+            <td><code>ThreadDataMiddleware</code>、<code>UploadsMiddleware</code>、<code>SandboxMiddleware</code>、<code>DynamicContextMiddleware</code></td>
+            <td>建立用户/线程隔离目录、注入上传文件、准备 sandbox、写入日期和 memory 提醒，让模型和工具在明确的运行现场中执行。</td>
+          </tr>
+          <tr>
+            <td>模型调用前决定可见上下文</td>
+            <td><code>SkillActivationMiddleware</code>、<code>DeerFlowSummarizationMiddleware</code>、<code>TodoMiddleware</code>、<code>ViewImageMiddleware</code>、<code>DeferredToolFilterMiddleware</code></td>
+            <td>控制模型看见哪些 skill、哪些历史摘要、哪些图片内容、哪些工具 schema，避免上下文膨胀和工具面过宽。</td>
+          </tr>
+          <tr>
+            <td>模型调用后检查输出</td>
+            <td><code>SafetyFinishReasonMiddleware</code>、<code>LoopDetectionMiddleware</code>、<code>SubagentLimitMiddleware</code>、<code>TitleMiddleware</code>、<code>TokenUsageMiddleware</code></td>
+            <td>处理安全终止、重复工具循环、过量 task 调用、自动标题和 token 归因，让一次模型输出在进入工具执行前被规范化。</td>
+          </tr>
+          <tr>
+            <td>工具调用时控制副作用</td>
+            <td><code>GuardrailMiddleware</code>、<code>SandboxAuditMiddleware</code>、<code>ToolErrorHandlingMiddleware</code>、<code>ToolOutputBudgetMiddleware</code>、<code>DanglingToolCallMiddleware</code></td>
+            <td>在工具执行边界做授权、审计、异常转换、输出裁剪和缺失 ToolMessage 修补，避免工具副作用直接破坏 loop。</td>
+          </tr>
+          <tr>
+            <td>Loop 结束后沉淀状态</td>
+            <td><code>MemoryMiddleware</code>、RunJournal、event store、token usage 汇总</td>
+            <td>把最终对话、使用量和执行事件沉淀为可查询的长期状态，而不是只依赖浏览器当前 SSE 流。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>这组 middleware 说明了 DeerFlow 和普通本地 agent 脚本的差异。普通脚本往往只关心模型和工具能否跑完；DeerFlow 还要关心用户隔离、前端可见状态、工具错误可恢复、长期记忆是否污染、MCP 工具是否过载、subagent 是否失控，以及安全终止时是否还能保持消息结构一致。</p>
+      <div class="note">
+        <h3>观测面也是 Loop 的一部分</h3>
+        <p><code>TokenUsageMiddleware</code> 和 RunJournal 不直接决定模型下一步做什么，但它们决定这次 loop 能否被解释：lead agent、subagent 和 middleware 自己发起的模型调用会被分开计入；<code>write_todos</code>、<code>present_files</code>、<code>task</code> 等工具调用还会被归因成结构化 action。对长任务来说，这些观测字段是定位成本膨胀、subagent 过度派发和 middleware 额外模型调用的入口。</p>
+      </div>
+    </section>
+
+    <section class="section" id="scenario-flows">
+      <h2>放到场景里看</h2>
+      <p>把上面的机制放回具体任务，可以看到简单问题、工具任务、深度研究和自定义 agent 走的是同一条 loop，只是打开的能力面不同。</p>
+      <ul class="flow-steps">
+        <li>
+          <h3>简单问题</h3>
+          <p>Gateway 创建 Run，factory 组装默认 Lead Agent，DynamicContext 注入日期和 memory，模型直接生成回答。即使没有工具和 subagent，TitleMiddleware 仍可能触发一次标题模型调用，MemoryMiddleware 也可能把最终问答排入记忆更新队列。</p>
+        </li>
+        <li>
+          <h3>文件或代码任务</h3>
+          <p>ThreadData 建立线程目录，Uploads 注入文件上下文，SandboxMiddleware 准备执行环境。模型调用 read/write/bash/search 等工具，Guardrail 和 SandboxAudit 管控副作用，ToolErrorHandling 把异常转成 ToolMessage，最后 artifacts 或文件路径进入 state 和事件流。</p>
+        </li>
+        <li>
+          <h3>深度研究</h3>
+          <p>Lead Agent 先判断任务是否可拆成多个独立方向。如果 subagent 启用，它会并行发出多个 <code>task</code> 调用，每个 subagent 在自己的上下文中使用 tools、MCP 和 skills。Lead Agent 等待结果回流后，再综合成最终回答。</p>
+        </li>
+        <li>
+          <h3>自定义 Agent</h3>
+          <p>请求携带 <code>agent_name</code> 后，factory 会切换 SOUL、模型、tool_groups 和 skills，但执行闭环仍然是同一个 Lead Agent loop。也就是说，custom agent 改变的是身份和能力边界，不是换掉整套 runtime。</p>
+        </li>
+      </ul>
+    </section>
+
+    <section class="section" id="deepagents-compare">
+      <h2>与 DeepAgents 对比</h2>
+      <p>DeerFlow 和 DeepAgents 的相似性不是巧合。二者都围绕 LangChain <code>create_agent()</code> 组织模型、工具和 middleware，也都把 filesystem、subagent、skills、summarization、memory 等能力作为 agent harness 的组成部分。但它们的工程边界不同。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>维度</th>
+            <th>DeepAgents</th>
+            <th>DeerFlow</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>定位</td>
+            <td>SDK / library-first，用 <code>create_deep_agent(...)</code> 直接构造 deep agent。</td>
+            <td>Server runtime / product harness-first，把 agent 放进 Gateway、Run、SSE、用户隔离和持久化体系。</td>
+          </tr>
+          <tr>
+            <td>Agent 组装</td>
+            <td>调用者显式传入 model、tools、subagents、skills、memory、backend、permissions。</td>
+            <td>运行时从 request config、app config、custom agent config、extensions config 和 storage 中解析。</td>
+          </tr>
+          <tr>
+            <td>Subagent</td>
+            <td>支持 declarative subagent、compiled subagent 和 async subagent，默认可加入 general-purpose subagent。</td>
+            <td>通过 <code>task</code> 工具和 <code>SubagentExecutor</code> 后台执行，强调前端可见 task 状态、token 回流和并发限制。</td>
+          </tr>
+          <tr>
+            <td>Skills</td>
+            <td>从 source paths 加载 skill files，作为 middleware 注入。</td>
+            <td>有 public/custom skill 存储、启用状态、slash activation、allowed-tools、skill 管理 API 和 sandbox 只读挂载。</td>
+          </tr>
+          <tr>
+            <td>产品化运行</td>
+            <td>重点在可嵌入的 agent 构造能力。</td>
+            <td>额外处理 Run 生命周期、SSE、MCP 配置管理、路径重写、memory queue、title、token usage、审计和 Gateway API。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p class="quote">DeepAgents 更像“构造 deep agent 的库”；DeerFlow 更像“把 deep agent 放进产品运行时的服务端框架”。前者强调可组合 API，后者强调一次 agent loop 在真实产品里如何被隔离、观察、管理和恢复。</p>
+    </section>
+
+    <section class="section" id="reading">
+      <h2>源码阅读路径</h2>
+      <p>如果要继续深入，建议不要从 README 或概念文档开始，而是沿着一次 Run 的真实调用链看。下面这些文件能把本文的结论落到代码上：</p>
+      <ul>
+        <li><code>backend/app/gateway/services.py</code>：看 request config 和 context 白名单如何进入 runnable config。</li>
+        <li><code>backend/packages/harness/deerflow/runtime/runs/worker.py</code>：看 worker 如何构造 runtime context、agent、checkpointer、callbacks 并调用 <code>agent.astream()</code>。</li>
+        <li><code>backend/packages/harness/deerflow/agents/lead_agent/agent.py</code>：看模型选择、thinking 降级、tools 加载、deferred MCP 和 middleware 组装。</li>
+        <li><code>backend/packages/harness/deerflow/agents/lead_agent/prompt.py</code>：看系统提示、skills 摘要和 subagent 指令如何生成。</li>
+        <li><code>backend/packages/harness/deerflow/agents/middlewares/todo_middleware.py</code>：看 plan mode 如何保存 todo、补回被压缩掉的 todo 上下文，并阻止未完成计划时提前退出。</li>
+        <li><code>backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py</code> 与 <code>backend/packages/harness/deerflow/agents/middlewares/safety_finish_reason_middleware.py</code>：看重复工具调用和 provider safety 终止如何强制收束 loop。</li>
+        <li><code>backend/packages/harness/deerflow/tools/tools.py</code>：看 config tools、built-ins、MCP、ACP、vision、subagent 工具如何聚合。</li>
+        <li><code>backend/packages/harness/deerflow/tools/builtins/present_file_tool.py</code> 与 <code>backend/packages/harness/deerflow/agents/thread_state.py</code>：看交付文件如何通过 <code>artifacts</code> 写回 ThreadState。</li>
+        <li><code>backend/packages/harness/deerflow/skills/</code>：看 <code>SKILL.md</code> 的解析、存储、启用状态和 allowed-tools 策略。</li>
+        <li><code>backend/packages/harness/deerflow/mcp/</code>：看 MCP 工具发现、缓存、session pool、OAuth 和路径重写。</li>
+        <li><code>backend/packages/harness/deerflow/tools/builtins/task_tool.py</code> 与 <code>backend/packages/harness/deerflow/subagents/</code>：看 subagent 如何被派发、轮询、取消和回流。</li>
+        <li><code>backend/packages/harness/deerflow/agents/middlewares/token_usage_middleware.py</code> 与 <code>backend/packages/harness/deerflow/runtime/journal.py</code>：看 token、工具 action 和 subagent 成本如何归因。</li>
+      </ul>
+    </section>
+
+    <footer>
+      <p>延伸阅读：<a href="architecture.html">Runtime 架构与调用链路</a>、<a href="runtime.html">Run Runtime 与运行一致性</a>。</p>
+    </footer>
+  </main>
+</body>
+</html>
