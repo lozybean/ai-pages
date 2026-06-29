@@ -1,0 +1,1096 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DeerFlow 研究：Run Runtime 与运行一致性</title>
+  <link rel="stylesheet" href="../../../assets/site-nav.css" />
+  <script src="../../../assets/site-nav.js" defer></script>
+  <style>
+    .runtime-svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      margin: 1rem 0 0;
+    }
+
+    .svg-title {
+      font-size: 15px;
+      font-weight: 800;
+      fill: #24211d;
+    }
+
+    .svg-small {
+      font-size: 12px;
+      fill: #6f675f;
+    }
+
+    .svg-label {
+      font-size: 13px;
+      font-weight: 700;
+      fill: #8a5a35;
+    }
+
+    .article-toc a.toc-child,
+    .article-toc-mobile-drawer__links a.toc-child {
+      margin-left: 16px;
+      padding-left: 18px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      position: relative;
+    }
+
+    .article-toc a.toc-child::before,
+    .article-toc-mobile-drawer__links a.toc-child::before {
+      content: "";
+      position: absolute;
+      left: 7px;
+      top: 50%;
+      width: 6px;
+      height: 1px;
+      background: var(--line);
+    }
+
+    .interaction-list {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 1rem;
+      margin: 1rem 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .interaction-list > li {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+      padding: 1rem;
+    }
+
+    .interaction-list h3 {
+      margin-top: 0;
+    }
+
+    .interaction-list ul {
+      margin-bottom: 0;
+    }
+
+    .boundary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">DeerFlow Research · Run Runtime</div>
+      <h1>DeerFlow 研究：Run Runtime 与运行一致性</h1>
+      <p class="intro">从一次 Run 的创建、执行、流式输出、取消、回滚和状态写入出发，梳理 DeerFlow 如何把用户交互转化为可观察、可中断、可持久化的运行过程，并说明当前实现的单 worker 边界与分布式一致性要求。</p>
+      <div class="meta">
+        <span class="tag">Run Runtime</span>
+        <span class="tag green">Consistency</span>
+        <span class="tag orange">Checkpoint</span>
+        <span class="tag purple">StreamBridge</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#model">核心模型</a>
+      <a href="#components">Runtime 协作模型</a>
+      <a class="toc-child" href="#runrecord-fields">RunRecord 字段</a>
+      <a class="toc-child" href="#run-lifecycle">Run 状态轮转</a>
+      <a class="toc-child" href="#runmanager-methods">RunManager 方法</a>
+      <a class="toc-child" href="#worker-runmanager">Worker 与 RunManager</a>
+      <a class="toc-child" href="#checkpoint-bridge">Checkpoint 与 StreamBridge</a>
+      <a class="toc-child" href="#persistence-stores">持久层 Store</a>
+      <a href="#philosophy">设计哲学</a>
+      <a href="#interactions">主要交互过程</a>
+      <a class="toc-child" href="#normal-run">普通流式执行</a>
+      <a class="toc-child" href="#user-intervention">用户主动打断</a>
+      <a class="toc-child" href="#stop-disconnect">停止与断连</a>
+      <a class="toc-child" href="#retry-queue">重跑与排队</a>
+      <a href="#consistency">运行一致性边界</a>
+      <a href="#distributed">分布式扩展取舍</a>
+      <a href="#reading">源码阅读路径</a>
+    </nav>
+
+    <section class="summary" id="model">
+      <h2>核心模型</h2>
+      <p>Run Runtime 处理的不是“一次请求返回一个回答”，而是“一次可被观察、可被取消、会写入状态的执行”。在 DeerFlow 中，Thread 承载持续上下文，Run 承载一次执行尝试，RunRecord 记录执行生命周期，Worker 推进 agent 图，Checkpointer 保存 ThreadState，StreamBridge 把执行过程投影为 SSE 事件。</p>
+      <p class="quote">理解 Run Runtime 的关键，是把事实来源和观察通道分开：checkpoint 是继续对话的事实来源，RunRecord 是执行生命周期记录，StreamEvent/SSE 是客户端观察一次执行过程的通道。</p>
+
+      <h3>整体模型：定位 Run 的位置</h3>
+      <p>在展开取消、回滚、用户主动打断和排队之前，需要先把 Run 放回 DeerFlow 的整体模型里。Run 既不是 Thread 本身，也不是 SSE 连接；它位于持续上下文和一次执行之间：从 ThreadState 读取上下文，驱动 Agent 执行，再把过程投影成 StreamEvent，并把结果写回 checkpoint。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>概念</th>
+            <th>在 Run Runtime 中的定位</th>
+            <th>实现承载</th>
+            <th>边界判断</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Thread</td>
+            <td>持续会话容器，是多次 Run 共享的上下文和权限边界。</td>
+            <td><code>thread_id</code>、LangGraph checkpoint、<code>ThreadMetaStore</code>。</td>
+            <td>一个 Thread 可以有多个 Run；Thread 不是一次执行，也不是一次 SSE 连接。</td>
+          </tr>
+          <tr>
+            <td>ThreadState</td>
+            <td>Run 开始和结束时围绕它读写的图状态。</td>
+            <td><code>ThreadState</code> 细化 <code>AgentState</code>，包含 <code>messages</code>、<code>title</code>、<code>todos</code>、<code>artifacts</code>、<code>thread_data</code>、<code>sandbox</code> 等。</td>
+            <td><code>values</code> 事件只是 ThreadState 的快照投影；真正的恢复来源是 checkpointer。</td>
+          </tr>
+          <tr>
+            <td>Run</td>
+            <td>对某个 Thread 发起的一次执行尝试，是本文分析的核心对象。</td>
+            <td>Gateway Run Service、<code>RunManager</code>、<code>RunRecord</code>、worker task。</td>
+            <td>Run 不等于完整对话。失败、重跑、用户补充打断都会形成新的 Run。</td>
+          </tr>
+          <tr>
+            <td>RunRecord</td>
+            <td>Run 的生命周期事实记录。</td>
+            <td><code>run_id</code>、<code>thread_id</code>、status、metadata、task、<code>abort_event</code>、model name、token usage。</td>
+            <td>它回答“这个 Run 是否活着、如何取消、最终状态是什么”；不保存完整 ThreadState。</td>
+          </tr>
+          <tr>
+            <td>Agent Execution</td>
+            <td>一次 Run 内部真正推进模型、工具和 middleware 的执行过程。</td>
+            <td>worker 调用 <code>agent.astream()</code>，Agent factory 组装 model、tools、middleware、checkpointer、store。</td>
+            <td>Agent 负责推进 state；Run Runtime 负责生命周期、取消、回滚和事件投影。</td>
+          </tr>
+          <tr>
+            <td>StreamEvent</td>
+            <td>Run 执行过程的观察事件。</td>
+            <td><code>metadata</code>、<code>values</code>、<code>messages</code>、<code>error</code>、<code>end</code> 等事件。</td>
+            <td>事件用于前端观察和重连，不是 Thread 的唯一事实来源。</td>
+          </tr>
+          <tr>
+            <td>StreamBridge / SSE</td>
+            <td>把 worker 生产的事件交给客户端消费。</td>
+            <td><code>publish</code>、<code>subscribe</code>、heartbeat、<code>Last-Event-ID</code> replay、<code>StreamingResponse</code>。</td>
+            <td>SSE 是传输连接；断连是否取消 Run 取决于 <code>on_disconnect</code>。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <svg class="runtime-svg" viewBox="0 0 980 320" role="img" aria-label="Run 在 DeerFlow 整体模型中的位置，展示 Thread、ThreadState、Run、Agent Execution、StreamEvent 和 SSE Client 的关系">
+        <defs>
+          <marker id="arrow-model" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+
+        <rect x="40" y="54" width="170" height="64" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="125" y="82" text-anchor="middle" class="svg-title">Thread</text>
+        <text x="125" y="103" text-anchor="middle" class="svg-small">持续上下文</text>
+
+        <rect x="40" y="196" width="170" height="64" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="125" y="224" text-anchor="middle" class="svg-title">ThreadState</text>
+        <text x="125" y="245" text-anchor="middle" class="svg-small">checkpoint channel values</text>
+
+        <rect x="300" y="54" width="170" height="64" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="385" y="82" text-anchor="middle" class="svg-title">Run</text>
+        <text x="385" y="103" text-anchor="middle" class="svg-small">一次执行尝试</text>
+
+        <rect x="300" y="196" width="170" height="64" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="385" y="224" text-anchor="middle" class="svg-title">RunRecord</text>
+        <text x="385" y="245" text-anchor="middle" class="svg-small">status / task / abort</text>
+
+        <rect x="555" y="54" width="170" height="64" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+        <text x="640" y="82" text-anchor="middle" class="svg-title">Agent Execution</text>
+        <text x="640" y="103" text-anchor="middle" class="svg-small">model + tools + middleware</text>
+
+        <rect x="555" y="196" width="170" height="64" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+        <text x="640" y="224" text-anchor="middle" class="svg-title">StreamEvent</text>
+        <text x="640" y="245" text-anchor="middle" class="svg-small">metadata / values / messages</text>
+
+        <rect x="790" y="126" width="150" height="64" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="865" y="154" text-anchor="middle" class="svg-title">SSE Client</text>
+        <text x="865" y="175" text-anchor="middle" class="svg-small">观察一次 Run</text>
+
+        <line x1="210" y1="86" x2="300" y2="86" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-model)"></line>
+        <text x="255" y="74" text-anchor="middle" class="svg-small">1:N</text>
+        <line x1="385" y1="118" x2="385" y2="196" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-model)"></line>
+        <line x1="470" y1="86" x2="555" y2="86" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-model)"></line>
+        <path d="M640 118 V154 H125 V196" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-model)"></path>
+        <path d="M640 118 V196" fill="none" stroke="#9f4d3f" stroke-width="2" marker-end="url(#arrow-model)"></path>
+        <line x1="725" y1="228" x2="790" y2="158" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-model)"></line>
+        <path d="M125 118 V148 H300" fill="none" stroke="#596f86" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow-model)"></path>
+
+        <text x="125" y="148" text-anchor="middle" class="svg-small">checkpoint 继续下一次 Run</text>
+        <text x="508" y="74" text-anchor="middle" class="svg-small">启动执行</text>
+        <text x="707" y="154" text-anchor="middle" class="svg-small">投影</text>
+      </svg>
+
+      <div class="compare">
+        <div class="good">
+          <h3>Run 的语义</h3>
+          <p>Run 是 Thread 上的一次执行尝试。普通用户输入、resume、wait、stream、主动打断后的补充消息，本质上都会变成新的 Run。</p>
+        </div>
+        <div class="warning">
+          <h3>容易误解的地方</h3>
+          <p>Run 不是完整对话，也不是可以随意迁移的后台任务。当前实现里，一个正在运行的 Run 绑定本进程内的 <code>asyncio.Task</code>、<code>abort_event</code> 和 memory stream buffer。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="components">
+      <h2>Runtime 协作模型</h2>
+      <p>Run Runtime 的组件可以分成三层：入口层负责协议和权限，执行层负责生命周期和 worker task，持久层负责状态、事件和元数据。这样看，很多交互功能都不是单点能力，而是这些组件共同完成的一次状态迁移。</p>
+
+      <svg class="runtime-svg" viewBox="0 0 980 420" role="img" aria-label="Run Runtime 协作模型，展示 Gateway、RunManager、Worker、StreamBridge、Checkpointer 和存储组件的关系">
+        <defs>
+          <marker id="arrow-run-a" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+
+        <text x="50" y="34" class="svg-label">入口层</text>
+        <rect x="40" y="50" width="190" height="72" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="135" y="82" text-anchor="middle" class="svg-title">Gateway API</text>
+        <text x="135" y="104" text-anchor="middle" class="svg-small">create / stream / wait / cancel / join</text>
+
+        <rect x="280" y="50" width="190" height="72" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="375" y="82" text-anchor="middle" class="svg-title">Run Service</text>
+        <text x="375" y="104" text-anchor="middle" class="svg-small">输入归一化 / config / context</text>
+
+        <text x="50" y="168" class="svg-label">执行层</text>
+        <rect x="40" y="184" width="190" height="80" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="135" y="216" text-anchor="middle" class="svg-title">RunManager</text>
+        <text x="135" y="238" text-anchor="middle" class="svg-small">in-memory index / concurrency strategy</text>
+
+        <rect x="280" y="184" width="190" height="80" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="375" y="216" text-anchor="middle" class="svg-title">RunRecord</text>
+        <text x="375" y="238" text-anchor="middle" class="svg-small">status / task / abort_event</text>
+
+        <rect x="520" y="184" width="190" height="80" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+        <text x="615" y="216" text-anchor="middle" class="svg-title">Worker</text>
+        <text x="615" y="238" text-anchor="middle" class="svg-small">run_agent / agent.astream</text>
+
+        <rect x="750" y="184" width="190" height="80" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+        <text x="845" y="216" text-anchor="middle" class="svg-title">StreamBridge</text>
+        <text x="845" y="238" text-anchor="middle" class="svg-small">publish / subscribe / replay</text>
+
+        <text x="50" y="310" class="svg-label">持久层</text>
+        <rect x="40" y="326" width="190" height="64" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="135" y="354" text-anchor="middle" class="svg-title">RunStore</text>
+        <text x="135" y="374" text-anchor="middle" class="svg-small">run history / status</text>
+
+        <rect x="280" y="326" width="190" height="64" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="375" y="354" text-anchor="middle" class="svg-title">Checkpointer</text>
+        <text x="375" y="374" text-anchor="middle" class="svg-small">ThreadState / checkpoint</text>
+
+        <rect x="520" y="326" width="190" height="64" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="615" y="354" text-anchor="middle" class="svg-title">RunEventStore</text>
+        <text x="615" y="374" text-anchor="middle" class="svg-small">messages / token / audit events</text>
+
+        <rect x="750" y="326" width="190" height="64" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="845" y="354" text-anchor="middle" class="svg-title">ThreadMetaStore</text>
+        <text x="845" y="374" text-anchor="middle" class="svg-small">display name / status / owner</text>
+
+        <line x1="230" y1="86" x2="280" y2="86" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-a)"></line>
+        <path d="M375 122 V150 H135 V184" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-a)"></path>
+        <line x1="230" y1="224" x2="280" y2="224" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-a)"></line>
+        <line x1="470" y1="224" x2="520" y2="224" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-a)"></line>
+        <line x1="710" y1="224" x2="750" y2="224" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-a)"></line>
+        <path d="M135 264 V326" fill="none" stroke="#596f86" stroke-width="2" marker-end="url(#arrow-run-a)"></path>
+        <path d="M615 264 V326" fill="none" stroke="#596f86" stroke-width="2" marker-end="url(#arrow-run-a)"></path>
+        <path d="M615 264 C560 304 430 292 375 326" fill="none" stroke="#596f86" stroke-width="2" marker-end="url(#arrow-run-a)"></path>
+        <path d="M615 264 C670 304 790 292 845 326" fill="none" stroke="#596f86" stroke-width="2" marker-end="url(#arrow-run-a)"></path>
+      </svg>
+
+      <table>
+        <thead>
+          <tr>
+            <th>组件</th>
+            <th>核心职责</th>
+            <th>一致性含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>RunManager</td>
+            <td>创建 Run、维护本进程 active run 索引、执行 <code>reject / interrupt / rollback</code> 策略。</td>
+            <td>当前 inflight 判断是本进程视角。多节点部署需要额外的 thread 级全局互斥。</td>
+          </tr>
+          <tr>
+            <td>RunRecord</td>
+            <td>记录 <code>status</code>、<code>task</code>、<code>abort_event</code>、<code>abort_action</code>、token 和错误。</td>
+            <td><code>task</code> 和 <code>abort_event</code> 是内存对象，不能跨 worker 直接使用。</td>
+          </tr>
+          <tr>
+            <td>Worker</td>
+            <td>运行 <code>run_agent()</code>，调用 <code>agent.astream()</code>，把 chunk 转成 StreamEvent。</td>
+            <td>真正的取消发生在 worker 对 <code>CancelledError</code> 和 <code>abort_event</code> 的响应里。</td>
+          </tr>
+          <tr>
+            <td>Checkpointer</td>
+            <td>保存和读取 ThreadState，是下一次 Run 继续执行的事实来源。</td>
+            <td>跨节点续接依赖共享 checkpointer；默认内存 checkpointer 不具备这个能力。</td>
+          </tr>
+          <tr>
+            <td>StreamBridge</td>
+            <td>解耦 worker 事件生产和 SSE 消费，支持 bounded replay 和 heartbeat。</td>
+            <td>当前 memory bridge 只在本进程有效，实时 join stream 有 worker 亲和性。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="runrecord-fields">RunRecord 的重要字段</h3>
+      <p><code>RunRecord</code> 是 Run Runtime 的最小执行账本。它不保存完整对话状态，而是记录一次 Run 如何被识别、归属、取消、观察和结算。理解这些字段后，后面的用户主动打断、取消、rollback 和断连行为会更清晰。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>字段</th>
+            <th>作用</th>
+            <th>运行时含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>run_id</code></td>
+            <td>一次执行尝试的唯一标识。</td>
+            <td>SSE <code>Content-Location</code>、join stream、cancel、RunStore 查询都围绕它定位一次 Run。</td>
+          </tr>
+          <tr>
+            <td><code>thread_id</code></td>
+            <td>Run 所属 Thread。</td>
+            <td>决定读取和写入哪个 checkpoint，也决定同一 Thread 下并发策略如何判断 active run。</td>
+          </tr>
+          <tr>
+            <td><code>assistant_id</code> / <code>model_name</code></td>
+            <td>记录本次执行使用的 agent 和模型线索。</td>
+            <td>创建 agent、展示 run 元数据、统计 token 和追踪时使用。实际模型名可能在 agent 构建后被修正。</td>
+          </tr>
+          <tr>
+            <td><code>status</code></td>
+            <td>Run 生命周期状态。</td>
+            <td><code>pending</code>、<code>running</code> 是活跃态；<code>success</code>、<code>error</code>、<code>interrupted</code> 是终态。</td>
+          </tr>
+          <tr>
+            <td><code>on_disconnect</code></td>
+            <td>SSE 客户端断开时的处理策略。</td>
+            <td><code>cancel</code> 会在 SSE consumer 收尾时取消后台 Run；<code>continue</code> 允许 Run 继续执行并写 checkpoint。</td>
+          </tr>
+          <tr>
+            <td><code>multitask_strategy</code></td>
+            <td>同一 Thread 已有 active Run 时，新 Run 的处理策略。</td>
+            <td>当前 RunManager 支持 <code>reject</code>、<code>interrupt</code>、<code>rollback</code>；<code>enqueue</code> 只在 API schema 中出现，运行时未实现。</td>
+          </tr>
+          <tr>
+            <td><code>task</code></td>
+            <td>本进程内执行 <code>run_agent()</code> 的 <code>asyncio.Task</code>。</td>
+            <td>这是 cancel 和 shutdown 能直接作用到 worker 的关键字段；跨进程或跨节点不可用。</td>
+          </tr>
+          <tr>
+            <td><code>abort_event</code> / <code>abort_action</code></td>
+            <td>协作式取消信号和取消动作。</td>
+            <td>worker 在流式循环中检查 <code>abort_event</code>；<code>abort_action</code> 决定是普通 interrupt 还是 rollback。</td>
+          </tr>
+          <tr>
+            <td><code>store_only</code></td>
+            <td>表示该记录是从 RunStore 恢复出来的只读记录。</td>
+            <td>它没有本地 task 和 abort_event。当前代码会拒绝对 store-only Run 做 join stream；取消也无法直接作用到真实 worker。</td>
+          </tr>
+          <tr>
+            <td>token / message 字段</td>
+            <td>记录输入输出 token、模型维度 token、LLM 调用次数、消息数量等。</td>
+            <td>由 RunJournal 和完成阶段更新，服务运行统计、列表展示和成本分析。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="run-lifecycle">Run 的生命周期状态轮转</h3>
+      <p>Run 的状态机可以分成两段：创建与执行阶段，以及终态结算阶段。<code>pending</code> 和 <code>running</code> 是活跃态；<code>success</code>、<code>error</code>、<code>interrupted</code> 和 <code>timeout</code> 是终态。当前 worker 主流程会主动落到 <code>success</code>、<code>error</code> 或 <code>interrupted</code>，<code>timeout</code> 是 schema 和数据库模型中的状态值，但主执行链路没有直接把 Run 设置为 timeout。</p>
+
+      <svg class="runtime-svg" viewBox="0 0 980 500" role="img" aria-label="Run 生命周期状态轮转图，展示 pending、running、success、error、interrupted 和 timeout 的转换关系">
+        <defs>
+          <marker id="arrow-run-lifecycle" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+          <marker id="arrow-run-lifecycle-soft" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#9f4d3f"></path>
+          </marker>
+        </defs>
+
+        <rect x="45" y="58" width="170" height="68" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="130" y="88" text-anchor="middle" class="svg-title">create</text>
+        <text x="130" y="111" text-anchor="middle" class="svg-small">Gateway / RunManager</text>
+
+        <rect x="305" y="58" width="170" height="68" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="390" y="88" text-anchor="middle" class="svg-title">pending</text>
+        <text x="390" y="111" text-anchor="middle" class="svg-small">RunStore 已写入</text>
+
+        <rect x="565" y="58" width="170" height="68" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="650" y="88" text-anchor="middle" class="svg-title">running</text>
+        <text x="650" y="111" text-anchor="middle" class="svg-small">worker 开始执行</text>
+
+        <rect x="760" y="172" width="170" height="68" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+        <text x="845" y="202" text-anchor="middle" class="svg-title">success</text>
+        <text x="845" y="225" text-anchor="middle" class="svg-small">正常完成</text>
+
+        <rect x="565" y="315" width="170" height="68" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+        <text x="650" y="345" text-anchor="middle" class="svg-title">error</text>
+        <text x="650" y="368" text-anchor="middle" class="svg-small">异常 / fallback / rollback</text>
+
+        <rect x="305" y="315" width="170" height="68" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="390" y="345" text-anchor="middle" class="svg-title">interrupted</text>
+        <text x="390" y="368" text-anchor="middle" class="svg-small">cancel / interrupt</text>
+
+        <rect x="45" y="315" width="170" height="68" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="130" y="345" text-anchor="middle" class="svg-title">timeout</text>
+        <text x="130" y="368" text-anchor="middle" class="svg-small">schema 保留态</text>
+
+        <line x1="215" y1="92" x2="305" y2="92" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-lifecycle)"></line>
+        <text x="260" y="78" text-anchor="middle" class="svg-small">create / put</text>
+
+        <line x1="475" y1="92" x2="565" y2="92" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-lifecycle)"></line>
+        <text x="520" y="78" text-anchor="middle" class="svg-small">set_status(running)</text>
+
+        <path d="M735 96 C795 105 835 130 845 172" fill="none" stroke="#5f7f55" stroke-width="2" marker-end="url(#arrow-run-lifecycle)"></path>
+        <text x="830" y="122" text-anchor="middle" class="svg-small">stream drained</text>
+
+        <path d="M650 126 V315" fill="none" stroke="#9f4d3f" stroke-width="2" marker-end="url(#arrow-run-lifecycle-soft)"></path>
+        <text x="708" y="225" text-anchor="middle" class="svg-small">exception / LLM fallback</text>
+
+        <path d="M565 98 C500 130 415 220 390 315" fill="none" stroke="#76527f" stroke-width="2" marker-end="url(#arrow-run-lifecycle)"></path>
+        <text x="432" y="210" text-anchor="middle" class="svg-small">cancel(action=interrupt)</text>
+
+        <path d="M565 112 C500 180 635 245 650 315" fill="none" stroke="#9f4d3f" stroke-width="2" marker-end="url(#arrow-run-lifecycle-soft)"></path>
+        <text x="590" y="250" text-anchor="middle" class="svg-small">cancel(action=rollback)</text>
+
+        <path d="M390 126 C340 190 385 260 390 315" fill="none" stroke="#76527f" stroke-width="2" marker-end="url(#arrow-run-lifecycle)"></path>
+        <text x="327" y="225" text-anchor="middle" class="svg-small">pending 被抢占</text>
+
+        <path d="M305 110 C220 155 145 230 130 315" fill="none" stroke="#596f86" stroke-width="2" stroke-dasharray="7 6" marker-end="url(#arrow-run-lifecycle)"></path>
+        <text x="185" y="230" text-anchor="middle" class="svg-small">非主链路</text>
+
+        <rect x="60" y="425" width="860" height="42" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="490" y="451" text-anchor="middle" class="svg-small">终态后不复活原 Run；重试、用户补充、排队继续执行都应创建新的 Run，并基于 Thread checkpoint 决定从哪里继续。</text>
+      </svg>
+
+      <table>
+        <thead>
+          <tr>
+            <th>状态</th>
+            <th>进入条件</th>
+            <th>后续行为</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>pending</code></td>
+            <td><code>RunManager.create()</code> 或 <code>create_or_reject()</code> 创建 RunRecord，并写入 RunStore。</td>
+            <td>等待 worker task 启动；如果此时被 <code>interrupt</code> 或 <code>rollback</code> 抢占，也会进入取消路径。</td>
+          </tr>
+          <tr>
+            <td><code>running</code></td>
+            <td>worker 进入 <code>run_agent()</code> 后调用 <code>set_status(running)</code>。</td>
+            <td>持续产出 stream event、写 checkpoint、刷新 progress，直到完成、异常或收到取消信号。</td>
+          </tr>
+          <tr>
+            <td><code>success</code></td>
+            <td><code>agent.astream()</code> 正常结束，且没有 LLM fallback error，也没有 abort。</td>
+            <td>worker flush journal，写 completion，更新 ThreadMeta 状态为 <code>idle</code>，发布 <code>end</code>。</td>
+          </tr>
+          <tr>
+            <td><code>interrupted</code></td>
+            <td>显式 cancel、SSE 断连触发 cancel、或新 Run 以 <code>interrupt</code> 策略抢占旧 Run。</td>
+            <td>保留已经写入的 checkpoint；旧 Run 进入终态，新用户意图应通过新的 Run 表达。</td>
+          </tr>
+          <tr>
+            <td><code>error</code></td>
+            <td>worker 捕获异常、LLM fallback error，或 <code>rollback</code> 策略触发回滚并把旧 Run 标记为错误。</td>
+            <td>错误信息写入 RunStore；rollback 会尝试恢复 pre-run checkpoint。</td>
+          </tr>
+          <tr>
+            <td><code>timeout</code></td>
+            <td>当前 schema 和数据库模型保留了该状态。</td>
+            <td>当前主执行链路没有直接设置该状态；客户端等待超时不等同于 Run 进入 timeout 终态。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="runmanager-methods">RunManager 的主要公开方法</h3>
+      <p><code>RunManager</code> 同时承担本进程 active run registry 和可选 RunStore 持久化门面。它的方法可以按“创建与查询、状态迁移、取消与并发、恢复与清理”理解。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>方法</th>
+            <th>作用</th>
+            <th>关键边界</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>create()</code></td>
+            <td>创建一个 pending Run，并写入内存索引和 RunStore。</td>
+            <td>如果持久化新 Run 失败，会回滚内存记录，避免调用方看见一个不可持久化的 Run。</td>
+          </tr>
+          <tr>
+            <td><code>create_or_reject()</code></td>
+            <td>创建 Run，同时处理同一 Thread 上的 active run。</td>
+            <td><code>reject</code> 发现 inflight 就报冲突；<code>interrupt</code>/<code>rollback</code> 会设置旧 Run 的 <code>abort_event</code> 并 cancel task。</td>
+          </tr>
+          <tr>
+            <td><code>get()</code> / <code>aget()</code></td>
+            <td>按 <code>run_id</code> 查询 RunRecord。</td>
+            <td>先查本地内存；查不到再从 RunStore hydrate。RunStore 恢复出来的是 <code>store_only=True</code>。</td>
+          </tr>
+          <tr>
+            <td><code>list_by_thread()</code></td>
+            <td>列出某个 Thread 下的 Run。</td>
+            <td>合并本地内存记录和 RunStore 记录，按创建时间倒序返回。</td>
+          </tr>
+          <tr>
+            <td><code>set_status()</code></td>
+            <td>更新本地 RunRecord 状态，并尽力同步到 RunStore。</td>
+            <td>只作用于本地已知 Run；如果 record 不在本进程内存中，会记录 warning 并返回。</td>
+          </tr>
+          <tr>
+            <td><code>update_model_name()</code></td>
+            <td>修正本次 Run 实际使用的模型名。</td>
+            <td>agent 构建后可能解析出默认模型或替代模型，需要把最终结果落到 RunRecord/RunStore。</td>
+          </tr>
+          <tr>
+            <td><code>update_run_progress()</code></td>
+            <td>运行中刷新 token、消息等进度快照。</td>
+            <td>只在 record 仍是 <code>running</code> 时更新，避免终态后进度写入覆盖完成结果。</td>
+          </tr>
+          <tr>
+            <td><code>update_run_completion()</code></td>
+            <td>Run 结束时持久化 token、消息、最后 AI 消息、首条用户消息等结算数据。</td>
+            <td>由 worker 的 <code>finally</code> 阶段调用，属于完成收尾而不是流式事件本身。</td>
+          </tr>
+          <tr>
+            <td><code>cancel()</code></td>
+            <td>请求取消一个本地 active Run。</td>
+            <td>设置 <code>abort_action</code>、<code>abort_event</code>，并对本地 task 调用 <code>cancel()</code>。找不到本地 record 或状态不可取消时返回 <code>false</code>。</td>
+          </tr>
+          <tr>
+            <td><code>reconcile_orphaned_inflight_runs()</code></td>
+            <td>启动时把没有本地 worker 持有的 persisted inflight Run 标记为错误。</td>
+            <td>当前用于避免重启后 UI 永远显示 running。它不是实时 worker health detection，也不是“迁移并恢复旧 worker”；通常要等启动恢复或扫描流程发现 persisted inflight 后，才会把孤儿 Run 变成明确错误。</td>
+          </tr>
+          <tr>
+            <td><code>has_inflight()</code></td>
+            <td>判断本进程内某个 Thread 是否有 pending/running Run。</td>
+            <td>这是本地视角，不是多节点全局互斥。</td>
+          </tr>
+          <tr>
+            <td><code>cleanup()</code> / <code>shutdown()</code></td>
+            <td>清理本地 RunRecord，或在进程退出前 drain/cancel 活跃 task。</td>
+            <td>shutdown 会在 checkpointer 关闭前尽量等待 Run 收尾，降低 checkpoint 写入撞上关闭连接池的风险。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="worker-runmanager">Worker 与 RunManager 的关系</h3>
+      <p>Worker 不是一个独立可调度实体，而是 <code>start_run()</code> 里通过 <code>asyncio.create_task(run_agent(...))</code> 创建出来的本地后台任务。RunManager 创建并持有 RunRecord，Worker 在执行过程中反过来调用 RunManager 更新状态、模型名、进度、完成统计和取消结果。</p>
+      <div class="compare">
+        <div class="good">
+          <h3>当前支持的关系</h3>
+          <p>同一个进程内，RunManager 可以直接通过 <code>record.task.cancel()</code> 打断 Worker；Worker 可以通过 <code>record.abort_event</code> 感知取消，并根据 <code>abort_action</code> 执行 interrupt 或 rollback。</p>
+        </div>
+        <div class="warning">
+          <h3>当前不支持的关系</h3>
+          <p>DeerFlow 当前不支持把一个正在运行的 Worker 迁移到另一个节点后继续执行。RunStore 可以恢复 RunRecord 的持久化字段，但恢复出来的是 <code>store_only</code> 记录，没有本地 task、abort_event 和 stream buffer。</p>
+        </div>
+      </div>
+      <p>这意味着，如果 Worker 所在进程退出或请求打到另一个节点，系统不能“重新开启同一个 Worker”。当前更接近的处理是：启动时把孤儿 inflight Run 标记为 error，用户或上层系统再基于同一个 Thread 创建新的 Run，从 checkpoint 继续或重跑。</p>
+      <p>如果要优化成分布式可恢复模型，需要把 worker ownership 从内存对象提升为持久协议：RunRecord 增加 <code>worker_id</code>、lease、heartbeat、fencing token；取消意图持久化为 <code>cancel_requested</code> 和 <code>cancel_action</code>；调度器基于 Thread 级锁启动新 worker；实时事件从 MemoryStreamBridge 迁移到 Redis Streams 或消息队列。即便这样，恢复的通常也应是“创建一个新的执行尝试继续 Thread”，而不是复活已经消失的 Python task。</p>
+
+      <h3 id="checkpoint-bridge">Checkpointer 与 StreamBridge 在主流程中的作用</h3>
+      <p>Checkpointer 和 StreamBridge 都不是主控组件，但它们分别守住了 Run Runtime 的两个关键边界：状态恢复边界和过程观察边界。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>组件</th>
+            <th>在主流程中的作用</th>
+            <th>在取消 / 回滚中的作用</th>
+            <th>分布式边界</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Checkpointer</td>
+            <td>Run 启动后被挂到 agent 上，LangGraph 执行过程中通过它保存 ThreadState；<code>/wait</code> 完成后也会读取它返回最终 state。</td>
+            <td>Worker 在 Run 开始时捕获 pre-run checkpoint snapshot；<code>rollback</code> 会把该 snapshot 写回，或在无 snapshot 时删除 thread state。</td>
+            <td>跨节点延续依赖共享 checkpointer。memory checkpointer 只适合本进程；SQLite 更偏单机；Postgres 才更适合多节点共享状态。</td>
+          </tr>
+          <tr>
+            <td>StreamBridge</td>
+            <td>Worker 发布 <code>metadata</code>、<code>messages</code>、<code>values</code>、<code>error</code> 和结束信号；SSE consumer 订阅并格式化为浏览器可消费的 SSE frame。</td>
+            <td>取消或异常后，worker 仍会在 <code>finally</code> 中 <code>publish_end</code>，避免客户端流无限等待。断连时是否取消 Run 由 SSE consumer 和 <code>on_disconnect</code> 配合决定。</td>
+            <td>当前 MemoryStreamBridge 是 per-process event log，只能支持本 worker 上的 join/replay。配置里有 redis 类型，但实现仍是未完成状态。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="persistence-stores">RunStore、RunEventStore、ThreadMetaStore 的建模边界</h3>
+      <p>这三个 Store 都属于持久层，但它们保存的不是同一种事实。<code>RunStore</code> 记录一次 Run 的生命周期账本，<code>RunEventStore</code> 记录可查询的事件流和消息投影，<code>ThreadMetaStore</code> 记录 Thread 的列表元数据。完整 ThreadState 仍由 Checkpointer 负责，实时 SSE 分发仍由 StreamBridge 负责。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Store</th>
+            <th>建模边界</th>
+            <th>关键字段</th>
+            <th>关键能力</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>RunStore</code></td>
+            <td>保存 RunRecord 可序列化部分，用于 run history、状态恢复、列表展示、token 聚合和 orphan inflight reconciliation。</td>
+            <td><code>run_id</code>、<code>thread_id</code>、<code>assistant_id</code>、<code>user_id</code>、<code>status</code>、<code>model_name</code>、<code>multitask_strategy</code>、<code>metadata_json</code>、<code>kwargs_json</code>、<code>error</code>、<code>message_count</code>、<code>first_human_message</code>、<code>last_ai_message</code>、token 统计、<code>follow_up_to_run_id</code>、<code>created_at</code>、<code>updated_at</code>。</td>
+            <td><code>put</code>、<code>get</code>、<code>list_by_thread</code>、<code>update_status</code>、<code>update_run_progress</code>、<code>update_run_completion</code>、<code>list_inflight</code>、<code>aggregate_tokens_by_thread</code>。</td>
+          </tr>
+          <tr>
+            <td><code>RunEventStore</code></td>
+            <td>保存 Run 过程中的事件投影。它主要由 <code>RunJournal</code> 通过 LangChain callbacks 写入，用于历史消息、调试审计、run event 查询和消息分页，不承担实时 fan-out，也不替代 checkpoint。</td>
+            <td><code>thread_id</code>、<code>run_id</code>、<code>user_id</code>、<code>event_type</code>、<code>category</code>、<code>content</code>、<code>event_metadata</code>、<code>seq</code>、<code>created_at</code>。其中 <code>category</code> 常见取值包括 <code>message</code>、<code>trace</code>、<code>outputs</code>、<code>error</code>、<code>middleware</code> 等，<code>seq</code> 在同一 Thread 内单调递增。</td>
+            <td><code>put</code>、<code>put_batch</code>、<code>list_messages</code>、<code>list_events</code>、<code>list_messages_by_run</code>、<code>count_messages</code>、<code>delete_by_thread</code>、<code>delete_by_run</code>。</td>
+          </tr>
+          <tr>
+            <td><code>ThreadMetaStore</code></td>
+            <td>保存 Thread 的产品侧元数据，用于线程列表、标题、状态、归属和 metadata 搜索。它不保存 messages，也不保存 ThreadState。</td>
+            <td><code>thread_id</code>、<code>assistant_id</code>、<code>user_id</code>、<code>display_name</code>、<code>status</code>、<code>metadata_json</code>、<code>created_at</code>、<code>updated_at</code>。</td>
+            <td><code>create</code>、<code>get</code>、<code>search</code>、<code>update_display_name</code>、<code>update_status</code>、<code>update_metadata</code>、<code>update_owner</code>、<code>check_access</code>、<code>delete</code>。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="compare">
+        <div class="note">
+          <h3>RunStore 的边界</h3>
+          <p>RunStore 能恢复 <code>store_only</code> RunRecord，用于查看历史和修正孤儿 running 状态；但它恢复不了本地 <code>asyncio.Task</code>、<code>abort_event</code> 和 StreamBridge buffer，所以不能靠它迁移一个正在执行的 worker。</p>
+        </div>
+        <div class="note">
+          <h3>RunEventStore 的边界</h3>
+          <p>RunEventStore 的 <code>seq</code> 解决的是同一 Thread 内事件查询顺序。前端实时打字机仍主要消费 StreamBridge/SSE 的在线事件；历史消息、调试审计和部分重连补齐才更依赖事件存储。</p>
+        </div>
+        <div class="note">
+          <h3>ThreadMetaStore 的边界</h3>
+          <p>ThreadMetaStore 更接近会话目录表。worker 结束时会从 checkpoint 里同步 <code>title</code> 到 <code>display_name</code>，并按 Run 结果更新 Thread 状态；这些写入是展示元数据，不是 Agent 状态本身，也不是严格的执行锁。</p>
+        </div>
+        <div class="warning">
+          <h3>不要混用的事实来源</h3>
+          <p>继续执行要读 Checkpointer；展示 run 列表要读 RunStore；展示历史消息要读 RunEventStore；展示 thread 列表和权限边界要读 ThreadMetaStore。把这些职责合并会让取消、rollback 和重连语义变得不可验证。</p>
+        </div>
+      </div>
+
+      <h3>事件与状态的事实层关系</h3>
+      <p>同一个 Run 的过程会同时出现在三类通道里，但它们不是同一个事实层。<code>StreamBridge/SSE</code> 面向在线观察，负责把 worker 产出的 <code>metadata</code>、<code>messages</code>、<code>values</code> 等事件推给前端；<code>RunEventStore</code> 面向持久查询，主要由 <code>RunJournal</code> 把 LangChain callback 标准化成 run events；<code>Checkpointer</code> 面向下一次执行，保存可恢复的 ThreadState。三者可以相互印证，但不能假设完全等价。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>事实层</th>
+            <th>主要写入者</th>
+            <th>消费方式</th>
+            <th>不承担的职责</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>SSE / StreamBridge</td>
+            <td>worker 在 <code>agent.astream()</code> 循环中 publish 在线事件。</td>
+            <td>前端实时渲染、打字机效果、运行过程观察。</td>
+            <td>不作为下一次 Run 的恢复事实来源。</td>
+          </tr>
+          <tr>
+            <td>RunEventStore</td>
+            <td><code>RunJournal</code> 基于 LangChain callbacks 写入 message、trace、lifecycle 事件。</td>
+            <td>历史消息分页、调试审计、run event 查询。</td>
+            <td>不负责实时 fan-out，也不保证和 SSE 每一帧一一对应。</td>
+          </tr>
+          <tr>
+            <td>Checkpointer</td>
+            <td>LangGraph 执行过程中写入 channel values 和 checkpoint。</td>
+            <td>下一次 Run 加载 ThreadState、<code>/wait</code> 读取最终 state、rollback 恢复 pre-run checkpoint。</td>
+            <td>不表达完整 UI 流式过程，也不撤销外部副作用。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card" id="philosophy">
+      <h2>设计哲学</h2>
+      <p>从 Runtime 协作模型可以看出，DeerFlow 没有把 Run 设计成一个可跨 worker 迁移和恢复的 durable job，而是把它定义为一次可观察、可中断、可审计的执行尝试。长期可恢复的是 ThreadState，短期执行现场则留在当前 worker 进程内。</p>
+      <p class="quote">DeerFlow 的核心取舍是：Run 是执行尝试，ThreadState 是长期事实；worker 失败后不复活原 Run，而是让失败可见，并通过新的 Run 基于 checkpoint 继续。</p>
+
+      <div class="compare">
+        <div class="good">
+          <h3>失败显式化</h3>
+          <p>单机 worker 不保证分布式安全。一个 task 如果因为 worker、进程或本地运行时原因失去执行者，会被视为孤儿 inflight Run，启动恢复阶段会把它标记为错误，而不是让另一个 worker 接管同一个 Python task。</p>
+        </div>
+        <div class="good">
+          <h3>中断终态化</h3>
+          <p>Run 的中断也是终态。用户从中断点继续，不是重启原 Run，而是创建新的 Run，并通过 checkpoint 加载 ThreadState。这样每次用户意图和每次执行尝试都有独立记录。</p>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>设计取舍</th>
+            <th>收益</th>
+            <th>代价</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Run 不跨 worker 迁移</td>
+            <td>不需要 worker lease、heartbeat、fencing token、分布式 cancel channel 和跨节点 stream buffer，运行时实现更轻。</td>
+            <td>长任务遇到 worker 故障时不能原地恢复，只能把旧 Run 标记失败，再由用户或上层系统发起新 Run。</td>
+          </tr>
+          <tr>
+            <td>恢复 ThreadState，而不是恢复 task 现场</td>
+            <td>恢复边界落在 checkpoint 上，语义清楚：下一次执行从持久化状态继续。</td>
+            <td>模型调用栈、工具执行现场、未投递的实时 stream buffer 都不会被恢复。</td>
+          </tr>
+          <tr>
+            <td>中断作为终态</td>
+            <td>用户主动打断、系统取消、rollback 都能在 Run 历史中留下明确记录，便于审计和 UI 解释。</td>
+            <td>如果产品想做“暂停后原地继续同一个 Run”，当前模型不直接支持，需要额外的 durable execution 协议。</td>
+          </tr>
+          <tr>
+            <td>失败交给用户重新确认</td>
+            <td>避免系统自动重试造成重复工具调用、重复外部请求、重复写文件等副作用。</td>
+            <td>用户体验上会比自动恢复更保守，尤其是研究、生成、长链路任务中更容易感知失败。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>与其他 Agent 运行框架的对比</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>框架类型</th>
+            <th>典型运行方式</th>
+            <th>与 DeerFlow 的差异</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>轻量 Agent Runtime</td>
+            <td>多数 Python Agent 框架直接在本地 coroutine、task 或请求线程里执行 agent。</td>
+            <td>它们通常也不保证 worker 级分布式恢复。DeerFlow 更进一步，把 RunRecord、RunEventStore、ThreadMetaStore 和 checkpoint 组合起来，让失败、中断和事件历史成为产品可见状态。</td>
+          </tr>
+          <tr>
+            <td>LangGraph Checkpoint 型</td>
+            <td>通过 thread/checkpoint 保存图状态，下一次执行可从状态继续。</td>
+            <td>DeerFlow 的恢复逻辑更接近这一类：恢复的是 ThreadState，不是恢复原 worker task。新的用户意图会创建新的 Run，并基于 checkpoint 继续推进图。</td>
+          </tr>
+          <tr>
+            <td>Durable Workflow 型</td>
+            <td>Temporal 这类系统把执行建模为 durable workflow，配套 activity retry、worker crash recovery、lease、heartbeat 和确定性 replay。</td>
+            <td>可靠性更强，但架构和开发约束更重。对 LLM 流式输出、非确定性模型调用、外部工具副作用，需要额外设计 replay、幂等和补偿机制。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>因此，DeerFlow 当前更适合交互式 Agent 产品：用户可以观察执行、主动打断、补充信息、基于新 Run 继续。若目标变成长时间后台任务、强 SLA、多节点任意接管或自动恢复，Run Runtime 就需要向分布式调度器或 durable workflow 方向扩展。</p>
+    </section>
+
+    <section class="card" id="interactions">
+      <h2>主要交互过程</h2>
+      <p>把 Run Runtime 放进真实交互里看，取消、回滚、断连和排队都不是孤立机制，而是不同的 Run 调度策略。它们共同遵循一个原则：新的用户意图通常创建新的 Run，旧 Run 是否保留、停止或回滚，由策略决定。</p>
+
+      <ul class="interaction-list">
+        <li id="normal-run">
+          <h3>普通流式执行</h3>
+          <p>普通流式执行的主线是：Gateway 创建 RunRecord，RunManager 注册 pending run，Run Service 启动 worker task，worker 调用 agent 图，StreamBridge 持续发布事件，SSE consumer 把事件推给客户端。</p>
+          <svg class="runtime-svg" viewBox="0 0 980 250" role="img" aria-label="普通流式执行时序图">
+            <defs>
+              <marker id="arrow-run-b" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+              </marker>
+            </defs>
+            <rect x="30" y="60" width="120" height="54" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+            <text x="90" y="92" text-anchor="middle" class="svg-title">Client</text>
+            <rect x="190" y="60" width="130" height="54" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+            <text x="255" y="92" text-anchor="middle" class="svg-title">Gateway</text>
+            <rect x="360" y="60" width="135" height="54" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+            <text x="428" y="92" text-anchor="middle" class="svg-title">RunManager</text>
+            <rect x="535" y="60" width="120" height="54" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+            <text x="595" y="92" text-anchor="middle" class="svg-title">Worker</text>
+            <rect x="695" y="60" width="125" height="54" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+            <text x="758" y="92" text-anchor="middle" class="svg-title">Bridge</text>
+            <rect x="850" y="60" width="110" height="54" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+            <text x="905" y="92" text-anchor="middle" class="svg-title">Checkpoint</text>
+
+            <line x1="150" y1="87" x2="190" y2="87" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-b)"></line>
+            <text x="170" y="75" text-anchor="middle" class="svg-small">POST stream</text>
+            <line x1="320" y1="87" x2="360" y2="87" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-b)"></line>
+            <text x="340" y="75" text-anchor="middle" class="svg-small">create</text>
+            <line x1="495" y1="87" x2="535" y2="87" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-b)"></line>
+            <text x="515" y="75" text-anchor="middle" class="svg-small">task</text>
+            <line x1="655" y1="87" x2="695" y2="87" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-b)"></line>
+            <text x="675" y="75" text-anchor="middle" class="svg-small">events</text>
+            <path d="M695 122 C520 190 245 190 90 122" fill="none" stroke="#9f4d3f" stroke-width="2" marker-end="url(#arrow-run-b)"></path>
+            <text x="390" y="198" text-anchor="middle" class="svg-small">SSE metadata / messages / values / end</text>
+            <line x1="655" y1="102" x2="850" y2="102" stroke="#596f86" stroke-width="2" marker-end="url(#arrow-run-b)"></line>
+            <text x="752" y="126" text-anchor="middle" class="svg-small">ThreadState writes</text>
+          </svg>
+          <ul>
+            <li><code>values</code> 事件是 state 快照投影，不等于前端唯一事实来源。</li>
+            <li>Run 完成后，worker 在 <code>finally</code> 中 flush journal、同步 title、更新 thread 状态并发布 <code>end</code>。</li>
+          </ul>
+        </li>
+
+        <li id="user-intervention">
+          <h3>用户主动打断并补充信息</h3>
+          <p>用户主动打断不是 Agent 澄清。它的语义是：用户在观察 Run A 的过程中发现方向不对，向同一个 Thread 发送补充消息 M2。M2 应创建 Run B，并通过 <code>interrupt</code> 或 <code>rollback</code> 决定如何处理 Run A。</p>
+          <svg class="runtime-svg" viewBox="0 0 980 320" role="img" aria-label="用户主动打断并补充信息的交互图">
+            <defs>
+              <marker id="arrow-run-c" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+              </marker>
+            </defs>
+            <rect x="40" y="40" width="170" height="58" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+            <text x="125" y="73" text-anchor="middle" class="svg-title">Run A running</text>
+            <rect x="280" y="40" width="170" height="58" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+            <text x="365" y="73" text-anchor="middle" class="svg-title">用户发送 M2</text>
+            <rect x="520" y="40" width="170" height="58" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+            <text x="605" y="73" text-anchor="middle" class="svg-title">创建 Run B</text>
+            <rect x="760" y="40" width="170" height="58" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+            <text x="845" y="73" text-anchor="middle" class="svg-title">继续执行</text>
+
+            <rect x="280" y="165" width="170" height="58" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+            <text x="365" y="198" text-anchor="middle" class="svg-title">interrupt</text>
+            <text x="365" y="218" text-anchor="middle" class="svg-small">保留已写 checkpoint</text>
+
+            <rect x="520" y="165" width="170" height="58" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+            <text x="605" y="198" text-anchor="middle" class="svg-title">rollback</text>
+            <text x="605" y="218" text-anchor="middle" class="svg-small">恢复 pre-run checkpoint</text>
+
+            <line x1="210" y1="69" x2="280" y2="69" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-c)"></line>
+            <line x1="450" y1="69" x2="520" y2="69" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-c)"></line>
+            <line x1="690" y1="69" x2="760" y2="69" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-c)"></line>
+            <path d="M365 98 V165" fill="none" stroke="#76527f" stroke-width="2" marker-end="url(#arrow-run-c)"></path>
+            <path d="M605 98 V165" fill="none" stroke="#9f4d3f" stroke-width="2" marker-end="url(#arrow-run-c)"></path>
+            <path d="M450 194 C560 280 735 255 845 98" fill="none" stroke="#76527f" stroke-width="2" marker-end="url(#arrow-run-c)"></path>
+            <path d="M690 194 C770 245 845 210 845 98" fill="none" stroke="#9f4d3f" stroke-width="2" marker-end="url(#arrow-run-c)"></path>
+            <text x="125" y="136" text-anchor="middle" class="svg-small">Run A 的 event 仍属于 Run A</text>
+            <text x="845" y="136" text-anchor="middle" class="svg-small">Run B 基于同一 Thread 读取 state</text>
+          </svg>
+          <ul>
+            <li><code>interrupt</code> 适合“当前方向可修正，保留已产生上下文”。</li>
+            <li><code>rollback</code> 适合“本轮方向错误，需要撤回到 Run A 开始前”。</li>
+            <li>更严谨的实现应让 Run B 等 Run A 到达终止边界后再读取 checkpoint，避免 rollback 和新执行交错。</li>
+          </ul>
+        </li>
+
+        <li id="stop-disconnect">
+          <h3>显式停止与断连</h3>
+          <p>显式停止通常走 <code>/runs/{run_id}/cancel</code> 或 SDK 对 existing stream 的 POST stop 入口。SSE 断连则由 <code>on_disconnect</code> 决定：<code>cancel</code> 会请求取消后台 Run，<code>continue</code> 则允许 Run 在后台继续写 checkpoint。</p>
+          <div class="compare">
+            <div class="good">
+              <h3>stop / cancel</h3>
+              <p>Gateway 调用 <code>run_mgr.cancel()</code>，设置 <code>abort_action</code> 和 <code>abort_event</code>，再对本地 <code>asyncio.Task</code> 调用 <code>cancel()</code>。</p>
+            </div>
+            <div class="note">
+              <h3>disconnect</h3>
+              <p>SSE consumer 在 <code>finally</code> 中检查 Run 是否仍 active。如果策略是 <code>cancel</code>，则触发同样的取消路径；如果是 <code>continue</code>，worker 继续运行。</p>
+            </div>
+          </div>
+        </li>
+
+        <li id="retry-queue">
+          <h3>重跑、排队与抢占</h3>
+          <p>失败 Run 不会被“复活”。重新执行应该创建新的 Run，并明确它基于哪个 checkpoint 继续。排队同样应建模为多个 Run 的串行调度，而不是把多个用户消息塞进同一个 running Run。</p>
+          <table>
+            <thead>
+              <tr>
+                <th>策略</th>
+                <th>当前语义</th>
+                <th>适合场景</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>reject</code></td>
+                <td>同一 Thread 有 active Run 时拒绝新 Run。</td>
+                <td>保守模式，避免并发写 ThreadState。</td>
+              </tr>
+              <tr>
+                <td><code>interrupt</code></td>
+                <td>请求中断旧 Run，创建新 Run，保留旧 Run 已写状态。</td>
+                <td>用户补充信息、纠偏、改变要求。</td>
+              </tr>
+              <tr>
+                <td><code>rollback</code></td>
+                <td>请求中断旧 Run，并恢复旧 Run 开始前 checkpoint。</td>
+                <td>用户认为本轮执行方向完全错误。</td>
+              </tr>
+              <tr>
+                <td><code>enqueue</code></td>
+                <td>API schema 中有字段，但当前 RunManager 未实现。</td>
+                <td>应扩展为 <code>queued</code> Run 和 thread 级调度器。</td>
+              </tr>
+            </tbody>
+          </table>
+        </li>
+      </ul>
+    </section>
+
+    <section class="card" id="consistency">
+      <h2>运行一致性边界</h2>
+      <p>在“Run 是执行尝试，ThreadState 是长期事实”的设计哲学下，一致性边界不能全部理解为缺陷。更准确的分法是：一部分是 DeerFlow 有意选择的设计边界，另一部分才是实现和部署时需要警惕的风险。</p>
+      <p class="quote">当前模型的目标不是让一次 Run 永远可恢复，而是让每次执行尝试有明确终态，并把下一次执行建立在 checkpoint 上。</p>
+
+      <h3>符合设计的边界</h3>
+      <div class="boundary-grid">
+        <div class="good">
+          <h3>worker 现场不迁移</h3>
+          <p><code>asyncio.Task</code>、<code>abort_event</code> 和 MemoryStreamBridge 是进程内对象。worker 失败后标记旧 Run 失败，再由用户或上层系统发起新 Run，符合当前设计。</p>
+        </div>
+        <div class="good">
+          <h3>中断是 Run 终态</h3>
+          <p><code>interrupted</code> 不是暂停态。继续执行要创建新的 Run，并从 checkpoint 加载 ThreadState，这让用户意图和执行尝试保持一一可审计。</p>
+        </div>
+        <div class="good">
+          <h3>RunStore 不恢复 worker</h3>
+          <p>RunStore 恢复的是历史账本和状态记录，不恢复执行现场。<code>store_only</code> RunRecord 用于查询和 orphan 修正，不用于接管正在执行的 task。</p>
+        </div>
+        <div class="good">
+          <h3>状态优先于观察通道</h3>
+          <p>checkpoint 是下一次执行的事实来源，SSE 是观察通道。断连、重连或流式事件缺失不应该改变 ThreadState 的恢复语义。</p>
+        </div>
+      </div>
+
+      <h3>需要警惕的实现风险</h3>
+      <div class="boundary-grid">
+        <div class="warning">
+          <h3>checkpoint 与 event 的观察差异</h3>
+          <p><code>agent.astream()</code> 产出 chunk 前，LangGraph 可能已经推进状态并写 checkpoint。如果此时停止 publish，前端看到的过程可能落后于下一次 Run 读取到的状态。</p>
+        </div>
+        <div class="warning">
+          <h3>cancel 是协作式取消</h3>
+          <p><code>run_mgr.cancel()</code> 可以先把 Run 标为 <code>interrupted</code>，但外部 IO、工具调用或模型请求未必立即停止。副作用工具需要幂等或补偿设计。</p>
+        </div>
+        <div class="warning">
+          <h3>rollback 需要屏障</h3>
+          <p>如果新 Run 在旧 Run 完成 rollback 前读取 checkpoint，就可能读到中间状态。更严格的抢占需要“旧 Run 终止并完成 checkpoint 边界后，新 Run 才启动”。</p>
+        </div>
+        <div class="warning">
+          <h3>rollback 不是事务回滚</h3>
+          <p><code>rollback</code> 恢复的是 pre-run checkpoint，不能撤销已经发出的 SSE、已经写入的 RunEventStore 事件、ThreadMeta 展示元数据，也不能撤销工具调用、文件写入或外部 API 请求。</p>
+        </div>
+        <div class="warning">
+          <h3>外部副作用需要幂等</h3>
+          <p>失败显式化和新 Run 重试会让同一用户意图再次触发工具。会写外部系统的工具应设计幂等键、去重记录或补偿动作，否则用户重跑可能造成重复提交。</p>
+        </div>
+        <div class="warning">
+          <h3>多节点需要执行权约束</h3>
+          <p>如果部署层不保证 sticky routing 或单 worker，同一 Thread 可能被多个节点同时执行。此时需要全局 thread 锁或 lease，否则会出现多个 checkpoint writer。</p>
+        </div>
+      </div>
+
+      <p>因此，当前一致性边界的重点不是“所有通道完全同步”，而是让每个事实层的职责保持稳定：checkpoint 负责继续执行，RunStore 负责 Run 生命周期，RunEventStore 负责历史事件投影，SSE 负责在线观察，外部副作用则需要由工具自身提供幂等或补偿能力。</p>
+
+      <svg class="runtime-svg" viewBox="0 0 980 250" role="img" aria-label="Run Runtime 一致性边界图">
+        <defs>
+          <marker id="arrow-run-d" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+        <rect x="60" y="50" width="170" height="62" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="145" y="82" text-anchor="middle" class="svg-title">Worker 内存</text>
+        <text x="145" y="103" text-anchor="middle" class="svg-small">task / abort_event</text>
+        <rect x="310" y="50" width="170" height="62" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="395" y="82" text-anchor="middle" class="svg-title">RunStore</text>
+        <text x="395" y="103" text-anchor="middle" class="svg-small">status / history</text>
+        <rect x="560" y="50" width="170" height="62" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="645" y="82" text-anchor="middle" class="svg-title">Checkpointer</text>
+        <text x="645" y="103" text-anchor="middle" class="svg-small">ThreadState</text>
+        <rect x="790" y="50" width="140" height="62" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+        <text x="860" y="82" text-anchor="middle" class="svg-title">SSE</text>
+        <text x="860" y="103" text-anchor="middle" class="svg-small">观察通道</text>
+        <line x1="230" y1="81" x2="310" y2="81" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-d)"></line>
+        <line x1="480" y1="81" x2="560" y2="81" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-d)"></line>
+        <line x1="730" y1="81" x2="790" y2="81" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-run-d)"></line>
+        <path d="M145 112 C200 175 310 185 395 112" fill="none" stroke="#9f4d3f" stroke-width="2" stroke-dasharray="6 5"></path>
+        <text x="270" y="192" text-anchor="middle" class="svg-small">状态已落库但 task 未完全停止</text>
+        <path d="M645 112 C700 175 800 180 860 112" fill="none" stroke="#9f4d3f" stroke-width="2" stroke-dasharray="6 5"></path>
+        <text x="760" y="192" text-anchor="middle" class="svg-small">状态已写入但事件未必已投递</text>
+      </svg>
+    </section>
+
+    <section class="card" id="distributed">
+      <h2>分布式扩展取舍</h2>
+      <p>在当前 DeerFlow 设计下，分布式扩展不是理解 Run Runtime 的前置条件。单 worker 或 sticky routing 已经能自洽地表达 Run 创建、流式输出、取消、回滚和失败显式化。分布式讨论的价值在于说明：如果未来目标变成长任务、强 SLA、多节点任意接管，就必须新增哪些运行时协议。</p>
+      <div class="compare">
+        <div class="good">
+          <h3>当前文章必须讨论的部分</h3>
+          <p>需要说明 DeerFlow 当前不恢复 worker 现场、不跨节点迁移 task，并通过失败终态 + 新 Run + checkpoint 继续来保持模型清晰。</p>
+        </div>
+        <div class="note">
+          <h3>可以作为扩展方向的部分</h3>
+          <p>分布式锁、worker lease、跨节点 stream、持久取消意图等不是当前设计必备能力。它们属于从交互式 Agent 走向 durable runtime 时才需要引入的增强。</p>
+        </div>
+      </div>
+      <p>如果要让同一个 Thread 的多次 Run 分散到不同节点，并支持主动打断、排队和 join stream，就需要把“执行权”从进程内对象提升为共享运行时协议。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>能力</th>
+            <th>当前实现</th>
+            <th>选择分布式后需要补充</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Thread 执行互斥</td>
+            <td>RunManager 本进程锁和本地 inflight 索引。</td>
+            <td>数据库行锁、Redis lock、lease 或 fencing token，保证同一 Thread 同时只有一个 checkpoint writer。</td>
+          </tr>
+          <tr>
+            <td>取消意图</td>
+            <td>写入本地 <code>abort_event</code> 并 cancel 本地 task。</td>
+            <td>持久化 <code>cancel_requested</code>、<code>cancel_action</code>，由目标 worker 心跳或控制通道感知。</td>
+          </tr>
+          <tr>
+            <td>Worker ownership</td>
+            <td>RunRecord 的 <code>task</code> 指向本进程 task。</td>
+            <td>RunRecord 记录 <code>worker_id</code>、lease 过期时间和心跳，支持 orphan recovery。</td>
+          </tr>
+          <tr>
+            <td>抢占屏障</td>
+            <td>创建新 Run 时会请求取消旧 Run，但不天然等待 rollback 完成。</td>
+            <td>引入 <code>cancelling</code>、<code>rolling_back</code>、<code>queued</code> 等中间态，旧 Run terminal 后再启动新 Run。</td>
+          </tr>
+          <tr>
+            <td>实时事件</td>
+            <td>MemoryStreamBridge 进程内 buffer。</td>
+            <td>Redis Streams、消息队列或数据库事件流，让任意节点都能 join / replay。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="quote">分布式一致性的核心不是让每个节点都能读 checkpoint，而是保证同一 Thread 的执行权、取消意图、checkpoint 写入和新 Run 启动顺序有一个全局可验证的状态机。</p>
+    </section>
+
+    <section class="card" id="reading">
+      <h2>源码阅读路径</h2>
+      <p>阅读这条链路时，可以从 Gateway 入口开始，再进入 runtime 组件。重点不是逐行背代码，而是观察每个组件在哪个状态边界上写入事实。</p>
+      <ul>
+        <li><code>backend/app/gateway/routers/thread_runs.py</code>：Run API、stream、wait、cancel、join 的 HTTP 入口。</li>
+        <li><code>backend/app/gateway/services.py</code>：<code>start_run()</code>、输入归一化、config/context 合并、worker task 启动、SSE consumer。</li>
+        <li><code>backend/packages/harness/deerflow/runtime/runs/manager.py</code>：RunRecord、RunManager、并发策略、取消、状态持久化、orphan recovery。</li>
+        <li><code>backend/packages/harness/deerflow/runtime/runs/worker.py</code>：<code>run_agent()</code>、pre-run checkpoint snapshot、agent.astream、interrupt/rollback、finally 收尾。</li>
+        <li><code>backend/packages/harness/deerflow/runtime/stream_bridge/memory.py</code>：当前 StreamBridge 的进程内事件缓冲、replay、heartbeat 和 cleanup。</li>
+        <li><code>backend/packages/harness/deerflow/runtime/checkpointer/async_provider.py</code>：memory、sqlite、postgres checkpointer 的创建方式。</li>
+        <li><code>backend/packages/harness/deerflow/runtime/events/store/</code>：持久化 messages、run events、token 和 audit 信息的事件存储。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
