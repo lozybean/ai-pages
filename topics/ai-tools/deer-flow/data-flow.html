@@ -1,0 +1,749 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DeerFlow 研究：数据层设计、API 语义与展示投影</title>
+  <link rel="stylesheet" href="../../../assets/site-nav.css" />
+  <script src="../../../assets/site-nav.js" defer></script>
+  <style>
+    .data-flow-svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      margin: 1rem 0 0;
+    }
+
+    .svg-title {
+      font-size: 15px;
+      font-weight: 800;
+      fill: #24211d;
+    }
+
+    .svg-small {
+      font-size: 12px;
+      fill: #6f675f;
+    }
+
+    .svg-label {
+      font-size: 13px;
+      font-weight: 700;
+      fill: #8a5a35;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">DeerFlow Research · Data Flow</div>
+      <h1>DeerFlow 研究：数据层设计、API 语义与展示投影</h1>
+      <p class="intro">一次 DeerFlow 对话不是一条聊天消息，而是一组状态、账本、事件、实时流和 UI 投影共同组成的运行系统。理解这些数据分别落在哪里、被哪个接口读取、又如何进入前端展示，才能解释历史会话、SSE 重连、RunEventStore、checkpoint 和多端同步之间的边界。</p>
+      <div class="meta">
+        <span class="tag">DeerFlow</span>
+        <span class="tag green">Data Flow</span>
+        <span class="tag red">API Design</span>
+        <span class="tag orange">SSE</span>
+        <span class="tag purple">Storage</span>
+      </div>
+    </section>
+
+    <nav class="article-toc" aria-label="文章目录">
+      <a href="#message-question">从 messages 看数据分层</a>
+      <a href="#design-model">先建立五层数据模型</a>
+      <a href="#source-map">数据事实源地图</a>
+      <a href="#run-write-path">一次 Run 的数据写入路径</a>
+      <a href="#api-contract">API 设计：接口读哪个事实源</a>
+      <a href="#sse-channel">SSE：实时通道不是持久状态</a>
+      <a href="#storage-config">存储配置设计</a>
+      <a href="#design-philosophy">设计哲学：把事实和投影拆开</a>
+      <a href="#phenomena">典型现象解释</a>
+      <a href="#frontend-projection">展示交互：从事实到工作台</a>
+      <a href="#reading">源码阅读路径</a>
+      <a href="#conclusion">结论</a>
+    </nav>
+
+    <section class="summary" id="message-question">
+      <h2>从 messages 看 DeerFlow 的数据分层</h2>
+      <p>DeerFlow 中的 <code>messages</code> 不是一个单一字段，而是一组分布在不同层次上的数据语义。它既可能表示 agent 下一轮执行要读取的对话状态，也可能表示运行过程中的展示事件、SSE 在线片段，或者前端合并后的 UI 状态。因此，同一个 <code>thread_id</code> 下，不同接口和不同运行阶段看到的 <code>messages</code> 并不一定相同。</p>
+
+      <p>例如，<code>/threads/{thread_id}/state</code> 返回的是 checkpoint 中的 <code>ThreadState.messages</code>，它服务于后续执行；<code>/threads/{thread_id}/messages</code> 返回的是 RunEventStore 中的消息事件投影，服务于分页展示、反馈和审计；SSE 里的 <code>event: messages</code> 则是当前 Run 的实时传输片段，服务于在线观察。它们共享“messages”这个名字，但回答的是不同问题。</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>名字</th>
+            <th>所在位置</th>
+            <th>真实语义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>ThreadState.messages</code></td>
+            <td>Checkpointer 的 <code>channel_values</code></td>
+            <td>下一轮 agent 继续执行时读取的权威对话状态。</td>
+          </tr>
+          <tr>
+            <td><code>/threads/{id}/messages</code></td>
+            <td>RunEventStore</td>
+            <td>跨 Run 的可展示消息事件投影，适合分页、反馈和审计视角。</td>
+          </tr>
+          <tr>
+            <td>SSE <code>messages</code> event</td>
+            <td>StreamBridge 在线流</td>
+            <td>当前 Run 执行过程中的实时消息片段，由 SDK 合并。</td>
+          </tr>
+          <tr>
+            <td>前端 <code>thread.messages</code></td>
+            <td>LangGraph SDK + DeerFlow hook</td>
+            <td>历史、实时流和乐观消息合并后的 UI 输入，不是后端事实源。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p class="quote">判断 DeerFlow 的 messages 时，首先要区分它是执行事实、事件投影、实时流，还是前端合成结果。</p>
+
+      <p>这个分层视角能解释很多看似矛盾的现象：一个 Run 已经成功、<code>message_count</code> 也有值，但 <code>/runs/{run_id}/messages</code> 仍然可能为空；刷新页面可以恢复历史会话，却不一定能重新接入正在运行的 SSE stream；换浏览器后可以找回 thread，却可能看不到完整的运行过程细节。根因都在于事实源、传输通道和展示投影并不是同一层数据。</p>
+    </section>
+
+    <section class="card" id="design-model">
+      <h2>先建立五层数据模型</h2>
+      <p>要把 DeerFlow 看清楚，最好先暂时放下“聊天应用”的直觉。普通聊天系统常把问题简化成：用户发一条消息，服务端存一条 assistant 回复，前端把消息列表渲染出来。但 DeerFlow 不是只生成回复，它会规划、调用工具、运行子任务、产生 artifact、记录 token、支持中断和重连，还要让下一轮 agent 能接着执行。</p>
+
+      <p>因此 DeerFlow 的数据设计更接近一个运行时系统：不同数据层回答不同问题，不能混在一个“messages 表”里。</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>层次</th>
+            <th>核心问题</th>
+            <th>设计取舍</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>状态层</td>
+            <td>下一轮 agent 应该从什么上下文继续？</td>
+            <td>必须稳定、可恢复、面向执行语义；对应 Checkpointer 和 <code>ThreadState</code>。</td>
+          </tr>
+          <tr>
+            <td>账本层</td>
+            <td>一次 Run 是否存在、是否完成、消耗了多少资源？</td>
+            <td>必须可查询、可聚合、适合列表和统计；对应 RunStore。</td>
+          </tr>
+          <tr>
+            <td>事件层</td>
+            <td>运行过程中发生过哪些可解释、可审计、可展示的细节？</td>
+            <td>高频、体积大、可能敏感，可按部署需要独立持久化；对应 RunEventStore。</td>
+          </tr>
+          <tr>
+            <td>传输层</td>
+            <td>浏览器如何在线观察一个正在运行的 Run？</td>
+            <td>追求低延迟和顺序消费，不承担完整历史存储；对应 StreamBridge 和 SSE。</td>
+          </tr>
+          <tr>
+            <td>投影层</td>
+            <td>用户界面应该把这些数据组织成什么工作台体验？</td>
+            <td>服务于展示、交互和局部反馈，不应反过来成为后端事实源；对应 SDK state 和 DeerFlow hooks。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p class="quote">这五层模型是理解全文的主线：状态用于继续执行，账本用于确认生命周期，事件用于解释过程，传输用于实时观察，投影用于组织用户体验。</p>
+
+      <p>后面讨论 API、SSE 和前端时，都可以回到这个模型判断：一个接口读到的空数组，可能只是某个投影层为空；一个 SSE 断开，也不代表状态层丢失；一个 Run 已经成功，也不保证事件层被持久化。</p>
+    </section>
+
+    <section class="card" id="source-map">
+      <h2>数据事实源地图</h2>
+      <p>有了五层模型，再看 DeerFlow 的存储结构就不容易混淆。系统里几乎所有数据都围绕 <code>thread_id</code> 和 <code>run_id</code> 组织，但这两个 ID 只是关联键，不代表所有数据都在同一个地方，也不代表所有接口都在读同一份记录。</p>
+
+      <p><code>thread_id</code> 更像一条长期会话线索：它串起 checkpoint、thread 列表、历史 Run 和 UI 工作台。<code>run_id</code> 则是一段具体执行的账本键：它标识一次 agent 运行、一次 SSE stream、一次 token 统计和一批过程事件。下面这张图先给出整体地图，后文再沿着一次 Run 的写入路径展开。</p>
+
+      <svg class="data-flow-svg" viewBox="0 0 980 430" role="img" aria-label="DeerFlow 数据事实源地图，展示前端、Gateway、RunStore、Checkpointer、RunEventStore、StreamBridge、ThreadMetaStore 和文件系统之间的关系">
+        <defs>
+          <marker id="arrow-data" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5a35"></path>
+          </marker>
+        </defs>
+
+        <rect x="45" y="42" width="165" height="68" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="128" y="70" text-anchor="middle" class="svg-title">Browser / SDK</text>
+        <text x="128" y="92" text-anchor="middle" class="svg-small">submit / join / render</text>
+
+        <rect x="285" y="42" width="170" height="68" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="370" y="70" text-anchor="middle" class="svg-title">Gateway API</text>
+        <text x="370" y="92" text-anchor="middle" class="svg-small">/api and /api/langgraph</text>
+
+        <rect x="530" y="42" width="180" height="68" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="620" y="70" text-anchor="middle" class="svg-title">Run Worker</text>
+        <text x="620" y="92" text-anchor="middle" class="svg-small">agent.astream()</text>
+
+        <rect x="70" y="175" width="180" height="72" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+        <text x="160" y="203" text-anchor="middle" class="svg-title">Checkpointer</text>
+        <text x="160" y="225" text-anchor="middle" class="svg-small">ThreadState / history</text>
+
+        <rect x="295" y="175" width="180" height="72" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+        <text x="385" y="203" text-anchor="middle" class="svg-title">RunStore</text>
+        <text x="385" y="225" text-anchor="middle" class="svg-small">status / token / counts</text>
+
+        <rect x="520" y="175" width="180" height="72" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+        <text x="610" y="203" text-anchor="middle" class="svg-title">RunEventStore</text>
+        <text x="610" y="225" text-anchor="middle" class="svg-small">messages / events / trace</text>
+
+        <rect x="745" y="175" width="170" height="72" rx="8" fill="#f6f8fa" stroke="#596f86"></rect>
+        <text x="830" y="203" text-anchor="middle" class="svg-title">StreamBridge</text>
+        <text x="830" y="225" text-anchor="middle" class="svg-small">SSE buffer / replay</text>
+
+        <rect x="205" y="310" width="180" height="72" rx="8" fill="#fffdf8" stroke="#e4dbcf"></rect>
+        <text x="295" y="338" text-anchor="middle" class="svg-title">ThreadMetaStore</text>
+        <text x="295" y="360" text-anchor="middle" class="svg-small">sidebar / title / status</text>
+
+        <rect x="475" y="310" width="180" height="72" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+        <text x="565" y="338" text-anchor="middle" class="svg-title">Files / Artifacts</text>
+        <text x="565" y="360" text-anchor="middle" class="svg-small">uploads / outputs</text>
+
+        <rect x="735" y="310" width="170" height="72" rx="8" fill="#fff7ed" stroke="#9f5a2f"></rect>
+        <text x="820" y="338" text-anchor="middle" class="svg-title">Memory</text>
+        <text x="820" y="360" text-anchor="middle" class="svg-small">user profile / facts</text>
+
+        <line x1="210" y1="76" x2="285" y2="76" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-data)"></line>
+        <line x1="455" y1="76" x2="530" y2="76" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-data)"></line>
+        <line x1="620" y1="110" x2="170" y2="175" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-data)"></line>
+        <line x1="620" y1="110" x2="385" y2="175" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-data)"></line>
+        <line x1="620" y1="110" x2="610" y2="175" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-data)"></line>
+        <line x1="710" y1="76" x2="830" y2="175" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-data)"></line>
+        <line x1="370" y1="110" x2="295" y2="310" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-data)"></line>
+        <line x1="610" y1="247" x2="565" y2="310" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-data)"></line>
+        <line x1="700" y1="210" x2="745" y2="210" stroke="#8a5a35" stroke-width="2" marker-end="url(#arrow-data)"></line>
+        <text x="489" y="407" text-anchor="middle" class="svg-label">同一次 Run 会同时写账本、写 checkpoint、写事件投影，并通过 SSE 暂时广播给浏览器</text>
+      </svg>
+
+      <table>
+        <thead>
+          <tr>
+            <th>事实源</th>
+            <th>负责回答的问题</th>
+            <th>丢失后的影响</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Checkpointer</td>
+            <td>这个 thread 下一轮从哪里继续？当前 <code>messages</code>、<code>todos</code>、<code>artifacts</code> 是什么？</td>
+            <td>会话连续性受影响，是执行状态的核心事实源。</td>
+          </tr>
+          <tr>
+            <td>RunStore</td>
+            <td>这个 Run 是否成功、什么时候创建、用了多少 token、有多少消息？</td>
+            <td>运行账本、统计和列表受影响，但不直接决定下一轮模型上下文。</td>
+          </tr>
+          <tr>
+            <td>RunEventStore</td>
+            <td>这次 Run 过程中发生了哪些 message、tool、trace、middleware 事件？</td>
+            <td>历史消息投影、审计、事件调试受影响；不等于 checkpoint 丢失。</td>
+          </tr>
+          <tr>
+            <td>StreamBridge</td>
+            <td>当前浏览器如何实时看到 Run 事件？断线后还能从哪条 SSE event 继续？</td>
+            <td>实时 join / replay 受影响，但已写入的 checkpoint 和 run 账本仍可存在。</td>
+          </tr>
+          <tr>
+            <td>ThreadMetaStore</td>
+            <td>侧边栏怎么列出 thread，title、status、updated_at 显示什么？</td>
+            <td>会话列表受影响，但不等于 thread state 消失。</td>
+          </tr>
+          <tr>
+            <td>Memory</td>
+            <td>长期用户偏好、历史摘要、facts 如何注入到后续对话？</td>
+            <td>个性化和长期记忆受影响，不影响单个 thread 的 checkpoint。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>这张地图也暗含一个设计原则：越靠近“继续执行”的数据，越应该稳定持久；越靠近“观察过程”的数据，越容易被配置成可选持久化；越靠近“展示体验”的数据，越应该允许前端重新投影。这个原则解释了 DeerFlow 为什么没有把所有东西都绑定到一张统一消息表。</p>
+    </section>
+
+    <section class="card" id="run-write-path">
+      <h2>一次 Run 的数据写入路径</h2>
+      <p>一次用户输入进入 DeerFlow 后，不是只写一个“assistant response”。它会先创建 Run 账本，再启动 worker。worker 执行时，一边把可恢复状态写进 Checkpointer，一边把过程细节写进 RunEventStore，同时通过 StreamBridge 把在线事件推给浏览器，最后再把统计和完成状态写回 RunStore。</p>
+
+      <p>这条写入路径体现了 DeerFlow 的核心取舍：恢复执行、解释过程、实时观察和最终展示是四件事。它们发生在同一次 Run 里，但不应该由同一个存储结构承担。下面用一个直接调用 Gateway 原生 <code>/api</code> 前缀的 curl 示例进入这条路径。</p>
+
+      <pre><code>export DEERFLOW_API="http://localhost:2026/api"
+
+thread_id=$(
+  curl -s -X POST "$DEERFLOW_API/threads" \
+    -H "Content-Type: application/json" \
+    -d '{}' \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["thread_id"])'
+)
+
+curl -N -X POST "$DEERFLOW_API/threads/$thread_id/runs/stream" \
+  -H "Accept: text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "assistant_id": "lead_agent",
+    "input": {
+      "messages": [
+        {
+          "type": "human",
+          "content": [
+            {
+              "type": "text",
+              "text": "请用三句话解释 DeerFlow 的 Run 生命周期"
+            }
+          ]
+        }
+      ]
+    },
+    "stream_mode": ["values", "messages-tuple"],
+    "stream_subgraphs": true,
+    "stream_resumable": true,
+    "context": {
+      "thread_id": "'"$thread_id"'",
+      "is_plan_mode": false,
+      "subagent_enabled": false
+    },
+    "on_disconnect": "continue",
+    "multitask_strategy": "reject"
+  }'</code></pre>
+
+      <p>这条请求会打开一个 SSE 响应，但它背后更重要的是数据写入顺序：</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>阶段</th>
+            <th>写入或发布</th>
+            <th>作用</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>创建 Run</td>
+            <td>RunManager / RunStore 写入 <code>RunRecord</code></td>
+            <td>生成 <code>run_id</code>，记录 status、kwargs、thread_id、assistant_id。</td>
+          </tr>
+          <tr>
+            <td>返回 stream 响应</td>
+            <td><code>Content-Location: /api/threads/{thread_id}/runs/{run_id}</code></td>
+            <td>让 SDK 从响应头识别 canonical run resource 和 <code>run_id</code>。</td>
+          </tr>
+          <tr>
+            <td>worker 执行</td>
+            <td>LangGraph agent 读取并写入 Checkpointer</td>
+            <td>更新 <code>ThreadState.messages</code>、todo、artifact、title 等 channel values。</td>
+          </tr>
+          <tr>
+            <td>运行过程记录</td>
+            <td>RunJournal 写 RunEventStore</td>
+            <td>记录 human input、AI response、tool result、trace、middleware 等事件。</td>
+          </tr>
+          <tr>
+            <td>实时观察</td>
+            <td>StreamBridge 发布 <code>metadata</code>、<code>messages</code>、<code>values</code>、<code>end</code></td>
+            <td>Gateway SSE consumer 把事件转成浏览器可消费的 SSE frame。</td>
+          </tr>
+          <tr>
+            <td>收尾</td>
+            <td>RunStore 写 token usage、<code>message_count</code>、final status；ThreadMetaStore 同步 title/status</td>
+            <td>让 run 列表、thread 列表、token usage 和历史查询能展示最终结果。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>前端 SDK 默认使用公开的 LangGraph-compatible 前缀 <code>/api/langgraph</code>。在本地 nginx 或 Next rewrites 下，<code>/api/langgraph/threads/{id}/runs/stream</code> 会被改写到 Gateway 原生的 <code>/api/threads/{id}/runs/stream</code>。因此看源码时常见的是 <code>/api/threads</code>，看浏览器网络请求时则可能看到 <code>/api/langgraph/threads</code>。</p>
+
+      <p>从数据视角看，<code>runs/stream</code> 不是一个单纯的“流式聊天接口”。它同时完成三件事：创建可查询的 Run 资源、启动会写 checkpoint 的后端执行、建立一个临时的实时观察通道。后续所有“重连”“join”“历史消息为空”的讨论，都来自这三件事被刻意拆开了。</p>
+    </section>
+
+    <section class="card" id="api-contract">
+      <h2>API 设计：接口读哪个事实源</h2>
+      <p>DeerFlow 的 API 名字很像一套统一资源模型，但它真正暴露的是多种读模型。只看 URL 很容易误判，所以更可靠的方式是问：这个接口回答的是执行状态、生命周期账本、事件投影，还是实时通道？</p>
+
+      <p>这种 API 设计不是偶然的。对用户来说，<code>thread</code> 和 <code>run</code> 是稳定的业务概念；对后端来说，状态、账本、事件和传输必须分开演进。因此 API 使用统一的资源路径组织入口，但在每个 endpoint 内部选择最适合回答该问题的事实源。它不是“一个资源对应一张表”的 CRUD 设计，而是围绕查询意图组织的读模型设计。</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>API</th>
+            <th>事实源</th>
+            <th>适合回答的问题</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>GET /api/threads/{thread_id}/state</code></td>
+            <td>Checkpointer</td>
+            <td>当前 thread 的权威状态是什么？历史对话、todo、artifact 当前值是什么？</td>
+          </tr>
+          <tr>
+            <td><code>POST /api/threads/{thread_id}/history</code></td>
+            <td>Checkpointer history</td>
+            <td>这个 thread 的 checkpoint 历史是什么？最新 checkpoint 里的 messages 是什么？</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/threads/{thread_id}/runs</code></td>
+            <td>RunStore</td>
+            <td>这个 thread 发生过哪些 Run？状态、时间、token usage、message count 是什么？</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/threads/{thread_id}/runs/{run_id}</code></td>
+            <td>RunStore</td>
+            <td>某个 Run 的生命周期账本是什么？是否成功？是否可取消？</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/threads/{thread_id}/messages</code></td>
+            <td>RunEventStore</td>
+            <td>跨 Run 的可展示 message event 投影是什么？哪些 message 可附加 feedback？</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/threads/{thread_id}/runs/{run_id}/messages</code></td>
+            <td>RunEventStore</td>
+            <td>某次 Run 的 message event 分页结果是什么？</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/threads/{thread_id}/runs/{run_id}/events</code></td>
+            <td>RunEventStore</td>
+            <td>某次 Run 的完整事件和 trace 是什么？</td>
+          </tr>
+          <tr>
+            <td><code>POST /api/threads/{thread_id}/runs/stream</code></td>
+            <td>RunStore + Checkpointer + StreamBridge + RunEventStore</td>
+            <td>创建新 Run，并打开在线观察通道。</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/threads/{thread_id}/runs/{run_id}/stream</code></td>
+            <td>StreamBridge</td>
+            <td>重新接入一个 active Run 的 SSE stream，必要时带 <code>Last-Event-ID</code>。</td>
+          </tr>
+          <tr>
+            <td><code>POST /api/threads/{thread_id}/runs/{run_id}/stream?action=interrupt</code></td>
+            <td>RunManager + StreamBridge</td>
+            <td>停止 Run，同时继续 stream 剩余 buffered events，让前端看到干净收尾。</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/threads/{thread_id}/token-usage</code></td>
+            <td>RunStore</td>
+            <td>聚合 thread 维度 token usage，可选择包含 active run 快照。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="warning">
+        <p><strong>最常见误解：</strong><code>/threads/{thread_id}/messages</code> 不是从 checkpoint 读取 <code>ThreadState.messages</code>，而是从 RunEventStore 读取 <code>category="message"</code> 的事件投影。查询真实历史对话时，应优先看 <code>/threads/{thread_id}/state</code> 或 <code>/threads/{thread_id}/history</code>。</p>
+      </div>
+
+      <p>这里有一个很实用的判断方法：如果你想知道“agent 下一轮会看到什么”，读 <code>state</code> 或 <code>history</code>；如果你想知道“这次运行是否成功、花了多少 token”，读 <code>runs</code>；如果你想知道“运行过程有哪些可展示/可审计事件”，读 <code>messages</code> 或 <code>events</code>；如果你想接入一个还在跑的任务，才去读 <code>stream</code>。</p>
+
+      <pre><code># 查询 thread 当前权威对话状态
+curl -s "$DEERFLOW_API/threads/$THREAD_ID/state" \
+  | jq '.values.messages'
+
+# 查询 checkpoint history 中最新一条携带的 messages
+curl -s -X POST "$DEERFLOW_API/threads/$THREAD_ID/history" \
+  -H "Content-Type: application/json" \
+  -d '{"limit": 1}' \
+  | jq '.[0].values.messages'</code></pre>
+    </section>
+
+    <section class="card" id="sse-channel">
+      <h2>SSE：实时通道不是持久状态</h2>
+      <p>SSE 是 DeerFlow 在线观察一次 Run 的协议通道。worker 不直接写浏览器连接，而是把运行事件发布到 StreamBridge；Gateway 的 SSE consumer 订阅 StreamBridge，再格式化成浏览器和 LangGraph SDK 可消费的 frame。</p>
+
+      <p>这里要先拆开三个常被混用的动作：<code>POST /runs/stream</code> 是创建一个新 Run 并立即观察它；<code>GET /runs/{run_id}/join</code> 或 <code>GET /runs/{run_id}/stream</code> 是接入一个已经存在且仍在当前 worker 上 active 的 Run；<code>POST /runs/{run_id}/stream?action=interrupt</code> 则是先取消或回滚，再继续把剩余 buffered events 流给前端，保证停止按钮后的 UI 能看到收尾状态。</p>
+
+      <pre><code>id: 1790000000000-12
+event: messages
+data: {...}
+
+id: 1790000000000-13
+event: values
+data: {...}</code></pre>
+
+      <div class="summary-grid">
+        <div class="mini">
+          <h3><code>metadata</code></h3>
+          <p>标记当前连接属于哪个 thread、哪个 run、哪些 stream mode。</p>
+        </div>
+        <div class="mini">
+          <h3><code>messages</code></h3>
+          <p>模型消息和工具消息的在线片段，最终由 SDK 合并进前端状态。</p>
+        </div>
+        <div class="mini">
+          <h3><code>values</code></h3>
+          <p>ThreadState channel values 快照，例如 todo、artifact、title 等。</p>
+        </div>
+        <div class="mini">
+          <h3><code>end</code> / <code>error</code></h3>
+          <p>结束或异常信号，驱动前端恢复 ready、刷新查询或进入错误路径。</p>
+        </div>
+      </div>
+
+      <p>每个 SSE frame 可以带 <code>id</code>。客户端断线后，如果带着 <code>Last-Event-ID</code> 重连，MemoryStreamBridge 会尝试从保留 buffer 中找到对应事件，并从下一条开始 replay。这里的 replay 只补在线观察通道中仍保留的事件，不等于恢复 Python task 的执行现场，也不等于读取完整历史消息。</p>
+
+      <p><code>on_disconnect=continue</code> 解决的是另一个问题：浏览器 SSE 连接断开后，后端 worker 是否继续执行。设置为 <code>continue</code> 时，Run 可以继续写 checkpoint、RunStore 和 RunEventStore；设置为 <code>cancel</code> 时，断连会触发取消语义。它不负责保证任意新浏览器都能接入原来的内存 stream。</p>
+
+      <p>Join 的语义也是围绕 StreamBridge：客户端不创建新 Run，而是接入已有 active Run 的 SSE stream。当前 DeerFlow 支持 <code>GET /runs/{run_id}/join</code> 和 <code>GET/POST /runs/{run_id}/stream</code> 这类入口；但这些入口能否工作，取决于持有该 Run 的 worker 是否还在，并且本进程内的 StreamBridge buffer 是否还在。当前 MemoryStreamBridge 的 buffer 是有界内存队列，超过保留窗口或进程切换后，<code>Last-Event-ID</code> 只能从最早保留事件开始 replay，甚至无法再提供实时 join。</p>
+
+      <div class="compare">
+        <div class="bad">
+          <h3>容易误解</h3>
+          <p>以为 <code>Last-Event-ID</code> 是一种历史消息查询协议，或者以为知道 <code>run_id</code> 就一定能接回完整运行过程。</p>
+        </div>
+        <div class="good">
+          <h3>更准确的理解</h3>
+          <p><code>Last-Event-ID</code> 只定位 StreamBridge buffer 里的事件偏移；<code>run_id</code> 可以从 RunStore 找回运行账本，但实时 join 仍要求 active worker 和 stream buffer 存在。</p>
+        </div>
+      </div>
+
+      <p class="quote">SSE 是观察通道，不是最终事实源。继续执行看 Checkpointer，生命周期看 RunStore，过程审计看 RunEventStore，在线重连才看 StreamBridge。</p>
+    </section>
+
+    <section class="card" id="storage-config">
+      <h2>存储配置设计</h2>
+      <p>DeerFlow 没有把所有数据都塞进一个“会话表”。核心业务数据、过程事件、实时 buffer 和长期记忆分别配置，是因为它们的数据量、可靠性要求、隐私风险和部署成本不同。</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>配置</th>
+            <th>控制的数据</th>
+            <th>当前常见取值</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>database</code></td>
+            <td>Checkpointer、RunStore、ThreadMetaStore、Feedback、Users、Channel connections 等核心数据。</td>
+            <td><code>memory</code>、<code>sqlite</code>、<code>postgres</code>。当前示例配置为 <code>sqlite</code>。</td>
+          </tr>
+          <tr>
+            <td><code>run_events</code></td>
+            <td>RunEventStore 中的 message event、trace、tool result、LLM request/response 等过程明细。</td>
+            <td><code>memory</code>、<code>db</code>、<code>jsonl</code>。当前示例配置为 <code>memory</code>。</td>
+          </tr>
+          <tr>
+            <td><code>stream_bridge</code></td>
+            <td>active Run 的 SSE buffer、heartbeat、<code>Last-Event-ID</code> replay 和 join stream。</td>
+            <td>当前主要是 <code>memory</code>；Redis stream bridge 仍属于后续方向。</td>
+          </tr>
+          <tr>
+            <td><code>memory</code></td>
+            <td>用户长期记忆、历史摘要、facts 和注入上下文。</td>
+            <td>默认文件存储，例如 <code>memory.json</code> 或 per-user memory file。</td>
+          </tr>
+          <tr>
+            <td>paths / sandbox / uploads</td>
+            <td>上传文件、artifact、sandbox 工作目录、输出文件。</td>
+            <td>文件系统和容器 volume，取决于部署路径。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>其中 <code>run_events</code> 单独配置尤其重要。Run events 是观测和审计数据，不是恢复执行所必需的核心状态；它写入频率高、体积可能大，还可能包含 prompt、tool 输入输出、文件路径和中间 trace。因此 DeerFlow 允许部署方只持久化核心账本和 checkpoint，而不持久保存完整事件明细。</p>
+
+      <pre><code>database:
+  backend: sqlite
+  sqlite_dir: .deer-flow/data
+
+run_events:
+  backend: memory
+  max_trace_content: 10240
+  track_token_usage: true
+
+memory:
+  enabled: true
+  storage_path: memory.json</code></pre>
+
+      <p>在标准本地启动方式下，<code>.deer-flow/data</code> 会按 Gateway 进程工作目录解析。若 Gateway 从 <code>backend/</code> 启动，SQLite 文件通常是：</p>
+
+      <pre><code>/Users/bytedance/Projects/deer-flow/backend/.deer-flow/data/deerflow.db</code></pre>
+
+      <p>这也解释了为什么同一个系统里，有些数据重启后还在，有些数据会消失：它们并不共享同一套持久化配置。</p>
+    </section>
+
+    <section class="card" id="design-philosophy">
+      <h2>设计哲学：把事实和投影拆开</h2>
+      <p>DeerFlow 的数据设计可以理解成一种轻量的读写分离：写入路径服务于运行时正确性，读取路径服务于不同交互问题。它没有试图让一个“messages”概念覆盖所有场景，而是承认 agent 运行天然包含多种事实。</p>
+
+      <div class="summary-grid">
+        <div class="mini">
+          <h3>执行事实</h3>
+          <p>Checkpointer 保存 agent 继续执行所需的状态。它关心的是“下一步怎么跑”，不是“用户界面如何排版”。</p>
+        </div>
+        <div class="mini">
+          <h3>账本事实</h3>
+          <p>RunStore 保存一次运行的存在性、状态和资源消耗。它让系统能回答“发生过什么运行”。</p>
+        </div>
+        <div class="mini">
+          <h3>过程事实</h3>
+          <p>RunEventStore 保存可解释的中间过程。它让系统能回答“为什么会得到这个结果”。</p>
+        </div>
+        <div class="mini">
+          <h3>展示投影</h3>
+          <p>前端把状态、事件和流合并成工作台。它服务于用户理解和操作，不反向定义后端事实。</p>
+        </div>
+      </div>
+
+      <p>这个拆分的好处是边界清楚。RunEventStore 可以因为成本或隐私原因配置为 <code>memory</code>，但不应该因此影响 checkpoint 恢复；SSE 可以因为进程重启而丢失 buffer，但不应该因此抹掉 RunStore 账本；前端可以过滤隐藏消息、合并乐观消息、重组 subagent 卡片，但不应该改变后端认为的 <code>ThreadState.messages</code>。</p>
+
+      <div class="warning">
+        <p><strong>当前取舍：</strong>DeerFlow 仍把 <code>ThreadState.messages</code> 作为 checkpoint 状态的一部分。这符合 LangGraph agent 的执行模型，因为恢复执行时需要拿到一组可直接喂给模型和 middleware 的消息上下文；但它也带来明确代价：对话越长、tool result 越多、subagent 过程越复杂，checkpoint 就越容易膨胀。</p>
+      </div>
+
+      <p>从设计上看，可以把“完整历史对话”和“恢复执行上下文”继续拆开。一个更强的演进方向是引入独立 <code>ConversationStore</code> 或 <code>MessageStore</code>，让它成为用户可见历史 transcript 的事实源；checkpoint 只保留恢复执行所需的最小闭包，例如最近若干条 materialized messages、summary、必要 tool call/tool result 对、artifact/todo/sandbox 状态，以及指向历史消息区间的稳定引用。</p>
+
+      <pre><code>ConversationStore
+  thread_id
+  seq
+  run_id
+  role
+  content
+  visibility
+  checkpoint_id
+  created_at
+
+Checkpoint
+  thread_id
+  checkpoint_id
+  recent_message_refs
+  context_summary_ref
+  materialized_recent_messages
+  todos
+  artifacts
+  sandbox
+  promoted_tools</code></pre>
+
+      <p>不过，这不应该被简化成“checkpoint 只存指针”。纯指针 checkpoint 会把恢复执行变成跨 store hydrate：需要处理消息版本、事务一致性、回滚到旧 checkpoint、分支历史、删除保留期、权限隔离和历史消息被压缩后的可重放性。更稳妥的边界是：历史 transcript 可以独立成为事实源，但 checkpoint 仍必须保存足够的 materialized execution context，保证 agent 恢复时不依赖不稳定的展示投影。</p>
+
+      <p>它的代价也很真实：调试时不能只看一个接口，必须知道每个接口背后的事实源；多端同步也不是天然成立，尤其是 active stream 仍依赖当前 worker 和内存 StreamBridge。若要面向分布式服务强化这部分能力，需要把 StreamBridge 从进程内 buffer 推进到可共享的传输层，例如 Redis stream 或其他外部 pub/sub，并让 join 路径不再依赖单机内存。</p>
+
+      <p class="quote">DeerFlow 的设计不是把复杂性藏起来，而是把复杂性分层：状态负责正确性，事件负责可解释性，流负责实时性，投影负责体验。</p>
+    </section>
+
+    <section class="card" id="phenomena">
+      <h2>典型现象解释</h2>
+      <p>把事实源区分清楚以后，一些看起来奇怪的现象就不再矛盾。</p>
+
+      <div class="compare">
+        <div class="bad">
+          <h3>现象一：Run 有 <code>message_count</code>，但 <code>/messages</code> 为空</h3>
+          <p><code>message_count</code> 来自 RunJournal 写入 RunStore 的统计快照；<code>/threads/{id}/messages</code> 和 <code>/runs/{id}/messages</code> 来自 RunEventStore。如果 <code>run_events.backend=memory</code> 且 Gateway 重启过，RunStore 仍有统计，RunEventStore 事件明细可能已经丢失。</p>
+        </div>
+        <div class="good">
+          <h3>正确查询历史对话</h3>
+          <p>如果目标是“这个 thread 当前的历史对话是什么”，应查询 <code>/threads/{id}/state</code> 的 <code>values.messages</code>，或查询 <code>/threads/{id}/history</code> 的最新 checkpoint，而不是依赖 RunEventStore message projection。</p>
+        </div>
+      </div>
+
+      <div class="compare">
+        <div class="bad">
+          <h3>现象二：换浏览器后无法恢复未完成 stream</h3>
+          <p>浏览器本地保存的 reconnect metadata 可能丢失，且 active stream buffer 在当前 worker 的 StreamBridge 里。换环境后仍可以从 ThreadMetaStore 和 Checkpointer 找回历史 thread，但不一定能接回未完成的实时流。</p>
+        </div>
+        <div class="good">
+          <h3>正确理解多端同步</h3>
+          <p><code>on_disconnect=continue</code> 可以让 worker 继续执行并写 checkpoint、RunStore、RunEventStore；但“能继续执行”不等于“任意客户端都能实时 join 当前内存 stream”。实时 join 仍受 StreamBridge 和 worker 亲和性限制。</p>
+        </div>
+      </div>
+
+      <div class="compare">
+        <div class="bad">
+          <h3>现象三：只靠浏览器缓存保存 <code>run_id</code></h3>
+          <p>前端可以从 <code>Content-Location</code>、SSE metadata 或 SDK 内部状态拿到当前 <code>run_id</code>，也可能把 reconnect metadata 留在浏览器环境里。但如果把它理解成唯一索引，换浏览器或清缓存后就会误判为“会话丢了”。</p>
+        </div>
+        <div class="good">
+          <h3>正确找回运行记录</h3>
+          <p>已创建的 Run 应从 RunStore 查询，例如先列出 thread，再读 <code>/threads/{thread_id}/runs</code> 找到最近的 <code>run_id</code>。这能恢复运行账本和最终状态判断，但仍不保证能重新接入 active SSE stream。</p>
+        </div>
+      </div>
+
+      <div class="compare">
+        <div class="bad">
+          <h3>现象四：<code>/api</code> 和 <code>/api/langgraph</code> 看起来重复</h3>
+          <p>Gateway 原生 router 挂在 <code>/api/*</code>；前端 SDK 默认使用 LangGraph-compatible 前缀 <code>/api/langgraph/*</code>。nginx 或 Next rewrite 会把后者转成 Gateway 原生路径。</p>
+        </div>
+        <div class="good">
+          <h3>正确区分路径语义</h3>
+          <p>写源码和 curl 调试时可以使用 <code>/api/threads</code>；观察浏览器和 SDK 时常看到 <code>/api/langgraph/threads</code>。它们对 runs / threads / streaming 最终落到同一批 Gateway router。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="frontend-projection">
+      <h2>展示交互：从事实到工作台</h2>
+      <p>前端不是后端事实源，但它是用户理解 DeerFlow 的主要界面。它的价值不在于原样渲染每条后端事件，而在于把 Checkpointer、RunStore、RunEventStore、StreamBridge 和文件系统的数据投影成一个可操作的任务工作台。</p>
+
+      <p>LangGraph SDK 消费 SSE，把在线事件合并成 <code>thread.messages</code> 和 <code>thread.values</code>；DeerFlow 再在外层处理乐观消息、历史分页、上传状态、token usage、stop、join 和 UI 分组。这个过程本质上是把多源事实降噪、排序、分组，并转换成用户能理解的交互状态。</p>
+
+      <p>消息列表并不直接渲染后端原始消息。DeerFlow 会过滤 <code>summary</code>、<code>loop_warning</code>、<code>todo_reminder</code>、<code>todo_completion_reminder</code> 等隐藏控制消息，也会把消息分成 <code>human</code>、<code>assistant:processing</code>、<code>assistant</code>、<code>assistant:present-files</code>、<code>assistant:subagent</code>、<code>assistant:clarification</code> 等 UI 组。</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>前端区域</th>
+            <th>主要数据来源</th>
+            <th>投影逻辑</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>消息列表</td>
+            <td>SDK 合并后的 messages + RunEventStore 历史补齐</td>
+            <td>过滤隐藏消息、合并乐观消息、按 tool/subagent/clarification 分组。</td>
+          </tr>
+          <tr>
+            <td>Todo 面板</td>
+            <td><code>thread.values.todos</code></td>
+            <td>把 ThreadState channel value 投影成任务清单。</td>
+          </tr>
+          <tr>
+            <td>Artifact 面板</td>
+            <td><code>thread.values.artifacts</code> + artifact API</td>
+            <td>从文件事实源读取预览和下载，不只是一段 markdown 链接。</td>
+          </tr>
+          <tr>
+            <td>Subagent 卡片</td>
+            <td><code>task</code> tool call + custom event</td>
+            <td>把子任务的运行状态、最新消息和结果组织成卡片。</td>
+          </tr>
+          <tr>
+            <td>停止按钮</td>
+            <td>SDK existing run stream + RunManager cancel</td>
+            <td>前端触发控制意图，真正的 interrupt / rollback 由后端运行时完成。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>因此，前端体验稳定性的关键不是把 UI state 当成事实源，而是建立清晰的恢复优先级：权威对话和 todo 从 checkpoint 恢复，运行列表和 token usage 从 RunStore 恢复，过程消息从 RunEventStore 补齐，正在运行的增量才通过 active SSE stream 观察。</p>
+
+      <p>这也解释了为什么 DeerFlow 前端需要同时处理“历史读取”和“在线流”。如果只读 checkpoint，用户会缺少运行过程、反馈位置和可解释细节；如果只依赖 SSE，刷新或换浏览器就会脆弱；如果只读 RunEventStore，又无法保证拿到下一轮 agent 真正会使用的状态。一个稳定的展示交互，必须承认这些数据源各自有边界。</p>
+    </section>
+
+    <section class="card" id="reading">
+      <h2>源码阅读路径</h2>
+      <p>如果要从源码验证这篇文章，可以按“事实源 -> 写入路径 -> API -> 前端投影”的顺序读：</p>
+      <ul>
+        <li><code>backend/app/gateway/deps.py</code>：启动时如何创建 StreamBridge、Checkpointer、LangGraph Store、RunStore、ThreadMetaStore、RunEventStore。</li>
+        <li><code>backend/packages/harness/deerflow/config/database_config.py</code>：<code>database</code> 如何统一控制 SQLite / Postgres / memory。</li>
+        <li><code>backend/packages/harness/deerflow/config/run_events_config.py</code>：RunEventStore 的 <code>memory</code>、<code>db</code>、<code>jsonl</code> 配置。</li>
+        <li><code>backend/packages/harness/deerflow/runtime/runs/worker.py</code>：一次 Run 如何初始化 RunJournal、写 checkpoint、发布 SSE、收尾写 RunStore。</li>
+        <li><code>backend/packages/harness/deerflow/runtime/journal.py</code>：RunJournal 如何记录 message event、trace、token usage 和 <code>message_count</code>。</li>
+        <li><code>backend/app/gateway/routers/threads.py</code>：<code>/state</code> 和 <code>/history</code> 如何从 Checkpointer 读取 <code>channel_values</code>。</li>
+        <li><code>backend/app/gateway/routers/thread_runs.py</code>：run 创建、stream、join、messages、events、token usage 的 HTTP 入口。</li>
+        <li><code>backend/packages/harness/deerflow/runtime/stream_bridge/memory.py</code>：MemoryStreamBridge 的 event buffer、heartbeat、<code>Last-Event-ID</code> replay 和 end sentinel。</li>
+        <li><code>frontend/src/core/api/api-client.ts</code>：前端 LangGraph SDK client 如何使用 <code>/api/langgraph</code> 前缀和 joinStream。</li>
+        <li><code>frontend/src/core/threads/hooks.ts</code>：SSE、历史消息、乐观消息、stop、token usage 和 thread values 如何合并成 UI state。</li>
+        <li><code>frontend/src/core/messages/utils.ts</code>：消息过滤、隐藏控制消息和 message grouping。</li>
+      </ul>
+    </section>
+
+    <section class="summary" id="conclusion">
+      <h2>结论</h2>
+      <p>DeerFlow 的数据设计不是一个单表会话模型，而是多个事实源协作：Checkpointer 负责继续执行，RunStore 负责生命周期账本，RunEventStore 负责过程审计和展示消息投影，StreamBridge 负责在线观察，ThreadMetaStore 负责会话列表，Memory 和文件系统负责长期记忆与产物。</p>
+      <p>从这个角度看，SSE、API 和前端 UI 都只是数据流上的不同投影。判断一个问题时，先问“这条数据的事实源是谁”，再问“这个接口只是读投影，还是读权威状态”。这比单独研究某个前端 hook 或某个 SSE event 更能解释 DeerFlow 的工程边界。</p>
+    </section>
+  </main>
+</body>
+</html>
