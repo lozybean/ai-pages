@@ -1,0 +1,739 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Harness：Agent 如何从 ReAct 循环走向可治理的运行时</title>
+<link rel="stylesheet" href="../assets/site-nav.css" />
+<script src="../assets/site-nav.js" defer></script>
+<style>
+    .harness-diagram {
+      width: 100%;
+      height: auto;
+      display: block;
+      margin: 1.2rem 0 0;
+    }
+
+    .harness-diagram text {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      fill: var(--ink);
+    }
+
+    .harness-diagram .lane-label {
+      font-size: 13px;
+      font-weight: 700;
+      fill: var(--muted);
+    }
+
+    .harness-diagram .node-title {
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .harness-diagram .node-detail {
+      font-size: 12px;
+      fill: var(--muted);
+    }
+
+    .source-list {
+      display: grid;
+      gap: .45rem;
+      margin: 0;
+      padding-left: 1.2rem;
+    }
+
+    .source-list li {
+      color: var(--muted);
+    }
+
+    .harness-flow {
+      flex-wrap: nowrap;
+      align-items: stretch;
+    }
+
+    .harness-flow .node {
+      flex: 1 1 0;
+      min-width: 0;
+      min-height: 68px;
+      display: flex;
+      flex-direction: column;
+      gap: .28rem;
+      text-align: center;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
+    .harness-flow .node code {
+      overflow-wrap: anywhere;
+    }
+
+    .harness-flow .flow-title {
+      display: block;
+    }
+
+    .harness-flow .flow-detail {
+      display: block;
+      color: var(--muted);
+      font-size: .78em;
+      font-weight: 650;
+      line-height: 1.25;
+    }
+
+    .harness-flow .arrow {
+      flex: 0 0 auto;
+      align-self: center;
+    }
+
+    @media (max-width: 760px) {
+      .harness-flow {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+      }
+
+      .harness-flow .node {
+        width: 100%;
+        min-height: 0;
+        box-sizing: border-box;
+      }
+
+      .harness-flow .arrow {
+        align-self: center;
+        transform: rotate(90deg);
+      }
+    }
+  </style>
+</head>
+<body>
+<main class="page">
+<section class="hero">
+<div class="eyebrow">Agent Runtime · Harness Engineering</div>
+<h1>Harness：Agent 如何从 ReAct 循环走向可治理的运行时</h1>
+<p class="intro">Agent 的行为来自模型与运行时的协同。Harness 把模型调用、工具执行、上下文组织、状态延续、权限控制、扩展机制和结果验证连接成一套持续运行的系统。</p>
+<div class="meta">
+<span class="tag">Harness</span>
+<span class="tag green">Agent Runtime</span>
+<span class="tag orange">ReAct</span>
+<span class="tag purple">Deep Agents</span>
+<span class="tag red">DeepSeek Harness</span>
+<span class="date">整理：2026-08-17</span>
+</div>
+</section>
+<nav class="article-toc" aria-label="文章目录">
+<a href="#summary">核心结论</a>
+<a href="#react-loop">一、从 ReAct 循环开始</a>
+<a href="#runtime-map">二、Harness 的运行时地图</a>
+<a href="#deep-agents">三、Deep Agents：Middleware 组装运行时</a>
+<a href="#pi">四、Pi：小内核与深扩展面</a>
+<a href="#explicit-workflow">五、OpenCode：显式工具面与权限语法</a>
+<a href="#cline-workflow">六、Cline：Plan/Act 与 Stateful Core</a>
+<a href="#mature-harness">七、Claude Code、Codex 与 Grok Build</a>
+<a href="#deepseek-harness">八、DeepSeek Harness：Everything is a Plugin</a>
+<a href="#observability-plane">九、Langfuse 与 Vercel：跨越 Runtime 的两层视角</a>
+<a href="#synthesis">十、把 Harness 读成一组设计选择</a>
+<a href="#sources">参考资料</a>
+</nav>
+<section id="summary" class="summary">
+<h2>核心结论</h2>
+<p>Harness 可以理解为包围模型调用与工具循环的一层 Agent Runtime。它组织任务上下文、工具面、会话状态、文件与 shell 环境、权限与审批、记忆与压缩、子代理、观测和验证。</p>
+<div class="quote">ReAct 描述了 Agent 如何在“推理—行动—观察”之间循环；Harness 决定这个循环运行在哪个环境里、携带哪些状态、拥有怎样的能力边界，以及什么条件构成一次完成。</div>
+<p>不同 harness 的差异，集中体现在几个问题上：哪些能力写进内置 runtime，哪些能力通过 middleware 或 plugin 接入；哪些信息进入 system prompt，哪些信息保存在 session；哪些规则由模型理解，哪些规则由权限、沙箱和验证机制执行。</p>
+</section>
+<section id="react-loop" class="card">
+<h2>一、从 ReAct 循环开始</h2>
+<p>ReAct 论文把语言模型的工作描述成一种交替过程：模型生成推理，选择行动，接收环境观察，再继续推理。对 Agent 来说，行动通常表现为工具调用，观察通常表现为工具结果或环境状态。</p>
+<svg class="harness-diagram" viewBox="0 0 980 370" role="img" aria-label="ReAct 循环与 Harness 运行时边界示意图">
+<defs>
+<marker id="react-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#8a5a35"></path>
+</marker>
+</defs>
+<rect x="20" y="20" width="940" height="320" rx="12" fill="#fffdf8" stroke="#e4dbcf"></rect>
+<text x="42" y="48" class="lane-label">模型—环境循环</text>
+<rect x="70" y="90" width="190" height="72" rx="9" fill="#f2faf7" stroke="#2f6f68"></rect>
+<text x="165" y="119" text-anchor="middle" class="node-title">Reasoning</text>
+<text x="165" y="142" text-anchor="middle" class="node-detail">理解任务 · 选择下一步</text>
+<rect x="395" y="90" width="190" height="72" rx="9" fill="#fff7ed" stroke="#9f5a2f"></rect>
+<text x="490" y="119" text-anchor="middle" class="node-title">Action</text>
+<text x="490" y="142" text-anchor="middle" class="node-detail">调用工具 · 改变环境</text>
+<rect x="720" y="90" width="190" height="72" rx="9" fill="#f6f8fa" stroke="#596f86"></rect>
+<text x="815" y="119" text-anchor="middle" class="node-title">Observation</text>
+<text x="815" y="142" text-anchor="middle" class="node-detail">工具结果 · 新状态</text>
+<line x1="260" y1="126" x2="395" y2="126" stroke="#8a5a35" stroke-width="2" marker-end="url(#react-arrow)"></line>
+<line x1="585" y1="126" x2="720" y2="126" stroke="#8a5a35" stroke-width="2" marker-end="url(#react-arrow)"></line>
+<path d="M815 162 V220 H165 V162" fill="none" stroke="#8a5a35" stroke-width="2" marker-end="url(#react-arrow)"></path>
+<text x="42" y="258" class="lane-label">Harness 负责的运行时条件</text>
+<rect x="70" y="276" width="180" height="40" rx="8" fill="#fcf9fd" stroke="#76527f"></rect>
+<text x="160" y="301" text-anchor="middle" class="node-detail">Context Assembly</text>
+<rect x="285" y="276" width="180" height="40" rx="8" fill="#fbfef9" stroke="#5f7f55"></rect>
+<text x="375" y="301" text-anchor="middle" class="node-detail">Session / Memory</text>
+<rect x="500" y="276" width="180" height="40" rx="8" fill="#fff8f5" stroke="#9f4d3f"></rect>
+<text x="590" y="301" text-anchor="middle" class="node-detail">Permission / Sandbox</text>
+<rect x="715" y="276" width="180" height="40" rx="8" fill="#f2faf7" stroke="#2f6f68"></rect>
+<text x="805" y="301" text-anchor="middle" class="node-detail">Verification / Trace</text>
+</svg>
+<p>这个循环本身很小，工程复杂度集中在循环周围。一次真实的 Agent turn 需要回答：模型看到哪些文件和历史？工具由谁执行？工具调用是否需要审批？失败后如何继续？会话能否恢复？任务完成如何确认？</p>
+<p>因此，ReAct 是理解 harness 的入口。沿着它向外展开，就能看到 context、tool、state、policy、extension 和 verification 六个运行时方向。</p>
+<div class="grid-2">
+<div class="mini-card">
+<h3>循环内部</h3>
+<p>模型读取上下文，产生 reasoning 和 tool call；runtime 执行工具，将结果重新送入下一步。</p>
+</div>
+<div class="mini-card">
+<h3>循环周围</h3>
+<p>runtime 组装上下文，维护 session，决定工具权限，管理执行环境，并留下可复盘的事件与验证结果。</p>
+</div>
+</div>
+<p class="source-note">参考：<a href="https://arxiv.org/abs/2210.03629">ReAct: Synergizing Reasoning and Acting in Language Models</a>；<a href="https://arxiv.org/abs/2605.13357">AI Harness Engineering: A Runtime Substrate for Foundation-Model Software Agents</a>。</p>
+</section>
+<section id="runtime-map" class="card">
+<h2>二、Harness 的运行时地图</h2>
+<p>将不同 harness 放在一起观察，可以得到一张相对稳定的运行时地图。具体产品的命名不同，承担的职责高度相似。</p>
+<table>
+<thead>
+<tr>
+<th>运行时层</th>
+<th>核心问题</th>
+<th>常见实现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Context / Prompt</td>
+<td>本轮模型看到什么？哪些项目规则、技能和工具指导进入 prompt？</td>
+<td>system prompt、项目 instruction、skills、middleware sections</td>
+</tr>
+<tr>
+<td>Loop / Turn</td>
+<td>一次请求如何推进？工具结果如何触发下一步？什么时候结束？</td>
+<td>ReAct loop、turn/step、Plan/Act、task driver</td>
+</tr>
+<tr>
+<td>Action / Tool</td>
+<td>Agent 能够读什么、写什么、执行什么、查询什么？</td>
+<td>filesystem、shell、search、web、LSP、MCP、subagent</td>
+</tr>
+<tr>
+<td>State / Memory</td>
+<td>对话、任务、文件结果、压缩摘要和长期记忆如何延续？</td>
+<td>session log、checkpointer、event store、memory files、compaction</td>
+</tr>
+<tr>
+<td>Policy / Environment</td>
+<td>工具由谁执行？哪些操作需要确认？运行在哪个工作区？</td>
+<td>permission、approval、sandbox、workspace、hooks</td>
+</tr>
+<tr>
+<td>Extension / Plane</td>
+<td>能力如何安装、发现、替换、卸载和观测？</td>
+<td>middleware、plugin、skill、MCP、ACP、telemetry、evaluation</td>
+</tr>
+</tbody>
+</table>
+<p>这张地图也是本文的比较方法。每个 harness 小结都围绕核心工具、prompt 组装、状态机制、独有特性和设计哲学展开。这样可以看到实现细节背后的取舍。</p>
+</section>
+<section id="deep-agents" class="card">
+<h2>三、Deep Agents：Middleware 组装运行时</h2>
+<p>Deep Agents 官方将自己定位为 “batteries-included agent harness”。它建立在 LangGraph runtime 和 LangChain agent loop 之上，通过 middleware 组合出一套带有明确偏好的 Agent Runtime。</p>
+<h3>从 <code>create_deep_agent</code> 到 Agent Runtime</h3>
+<p>Deep Agents 的入口函数承担的是运行时装配工作。它会解析 model、profile、backend 和 subagent 配置，组合内置与自定义 middleware，生成 system prompt，再把组装结果交给 LangChain agent loop。实际运行中的 state、checkpoint、streaming 和 interrupt 由 LangGraph 负责。</p>
+<div class="map-line harness-flow" aria-label="Deep Agents 运行时组装流程">
+<span class="node"><span class="flow-title"><code>create_deep_agent</code></span><span class="flow-detail">model · profile · backend</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">Middleware stack</span><span class="flow-detail">tools · prompt · state</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">LangChain Agent Loop</span><span class="flow-detail">model · tool calls</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">LangGraph Runtime</span><span class="flow-detail">checkpoint · interrupt · resume</span></span>
+</div>
+<p>因此，middleware 位于 Agent Loop 内部。它可以参与模型调用前的上下文准备、工具调用前后的处理、状态更新以及上下文压缩。Deep Agents 的能力模块也由此获得了统一的接入位置。</p>
+<h3>核心能力模块：工具、Prompt、State 与 Backend</h3>
+<table>
+<thead>
+<tr><th>能力模块</th><th>主要工具或机制</th><th>Prompt 贡献</th><th>State / 执行边界</th></tr>
+</thead>
+<tbody>
+<tr><td>Planning</td><td><code>write_todos</code></td><td>说明如何拆分任务、更新进度和处理未完成事项</td><td>todo 状态进入 Agent state</td></tr>
+<tr><td>Filesystem</td><td><code>ls</code>、<code>read_file</code>、<code>write_file</code>、<code>edit_file</code>、<code>glob</code>、<code>grep</code></td><td>描述虚拟文件系统和文件操作方式</td><td>backend 决定文件如何读写；合适的 backend 可以暴露 <code>execute</code></td></tr>
+<tr><td>Subagent</td><td><code>task</code></td><td>说明何时委派任务、如何描述子任务和接收结果</td><td>子 Agent 拥有独立上下文，并可配置自己的模型、工具和 middleware</td></tr>
+<tr><td>Skills / Memory</td><td>技能和 memory files</td><td>把按需技能、长期上下文和使用规则放入 prompt</td><td>内容可以通过文件系统和上下文引用延续</td></tr>
+<tr><td>Summarization</td><td>压缩、摘要和 offloading</td><td>为长任务保留必要的工作上下文</td><td>历史消息被摘要，较大的结果可以写入文件并在上下文中保留引用</td></tr>
+<tr><td>Human-in-the-loop</td><td>interrupt、approve、edit、reject</td><td>说明哪些动作需要人工确认</td><td>LangGraph 暂停执行，等待人工决策后继续</td></tr>
+</tbody>
+</table>
+<p>这张表说明了一件重要的事情：Deep Agents 的内置能力通常同时包含工具、prompt、state 和执行机制。工具只是能力模块暴露给模型的表面接口，middleware 才是把这些部分连在一起的装配单元。</p>
+<h3>一次工具调用如何经过 Middleware</h3>
+<div class="map-line harness-flow" aria-label="Deep Agents 工具调用运行路径">
+<span class="node"><span class="flow-title">准备 state</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">组装 prompt</span><span class="flow-detail">确定可见工具</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">模型选择工具</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">middleware / policy</span><span class="flow-detail">检查、拦截、修改</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">backend 执行</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">更新 state</span><span class="flow-detail">压缩或进入下一轮</span></span>
+</div>
+<p>模型负责从当前工具集合中选择动作，middleware 负责准备模型看到的能力面和上下文，backend 负责执行实际操作，LangGraph 负责保存和恢复运行状态。每一层都有清晰的控制点，工具调用也因此拥有了可观测、可审批和可恢复的路径。</p>
+<h3>System prompt、State 与 Middleware</h3>
+<div class="grid-2">
+<div class="mini-card">
+<h3>Prompt 组装</h3>
+<p>assembled system prompt 可以包含 base agent prompt、todo 指导、memory、skills、virtual filesystem、subagent、custom middleware 和 HITL 指导。能力模块通过 prompt 把“什么时候使用工具、工具如何协作”交给模型。</p>
+</div>
+<div class="mini-card">
+<h3>State 组装</h3>
+<p>middleware 可以贡献结构化 state 字段。消息、todos、工具结果、interrupt 和摘要都能沿着 LangGraph 的运行状态延续，并由 checkpointer 支持恢复。</p>
+</div>
+</div>
+<p>大工具结果写入文件系统、主上下文保留引用，是 Deep Agents 处理长任务的典型方式。Context engineering 在这里拥有明确的 runtime 位置：它参与每轮请求的 prompt、工具集合和历史状态准备。</p>
+<h3>设计哲学：把 Agent 能力做成可组合部件</h3>
+<p>Deep Agents 的默认能力拥有一致的形状：工具负责让模型采取行动，prompt 负责解释使用方式，state 负责延续过程，backend 或 policy 负责确定执行边界。用户可以替换 backend、添加 middleware、配置 subagent，同时保留 LangGraph 作为底层运行时。</p>
+<div class="quote">Deep Agents 把“计划、文件、记忆、技能、子代理和人工审批”组织成一组可组合 middleware，让一个稳定的模型—工具循环获得更长的工作半径。</div>
+<p class="source-note">参考：<a href="https://github.com/langchain-ai/deepagents">Deep Agents README</a>、<a href="https://docs.langchain.com/oss/python/deepagents/customization">Customization</a>、<a href="https://docs.langchain.com/oss/python/deepagents/context-engineering">Context engineering</a>、<a href="https://github.com/langchain-ai/deepagents/blob/main/libs/ARCHITECTURE.md">Architecture</a>。</p>
+</section>
+<section id="pi" class="card">
+<h2>四、Pi：小内核与深扩展面</h2>
+<p>Pi 采取另一种组织方式：默认 runtime 保持小而清晰，复杂能力通过 TypeScript extensions、skills、prompts、packages 和 themes 接入。Pi 的 extension 以宿主插件模块的形式存在，可以向宿主注册事件、工具、命令、快捷键和 UI 能力。</p>
+<h3>最小内核与动态 Prompt</h3>
+<div class="grid-2">
+<div class="mini-card">
+<h3>默认工具</h3>
+<p>核心工具围绕文件读取、编辑、写入和 shell 执行展开；具体工具集合由当前配置和启用状态决定，扩展还可以注册额外工具。</p>
+</div>
+<div class="mini-card">
+<h3>宿主 API</h3>
+<p>Extension API 提供事件监听、工具注册、命令注册、快捷键、UI、session 操作和 Provider 请求拦截等入口。</p>
+</div>
+</div>
+<p>Pi 的 system prompt 会根据当前启用的工具、工具说明片段、prompt guidelines、工作目录、项目 context files 和 skills 动态构造。工具集合本身成为 prompt 的一部分，扩展可以通过注册工具和生命周期事件改变 Agent 的能力面。</p>
+<h3>Extension API 的技术形态</h3>
+<p>一个 extension 通常导出默认函数。宿主加载模块后传入 <code>ExtensionAPI</code>，扩展通过这个对象向 Pi 注册能力：</p>
+<pre><code>export default function (pi: ExtensionAPI) {
+  pi.on("tool_call", async (event, ctx) =&gt; {
+    if (event.toolName === "bash") {
+      const ok = await ctx.ui.confirm("运行 bash？", "");
+      if (!ok) return { block: true, reason: "用户拒绝执行" };
+    }
+  });
+
+  pi.registerCommand("hello", {
+    description: "Say hello",
+    handler: async (_args, ctx) =&gt; {
+      await ctx.ui.notify("hello");
+    },
+  });
+}</code></pre>
+<p>这段代码同时展示了 Pi extension 的两个方向：它可以参与 Agent 行为，也可以参与宿主交互。前者通过生命周期事件实现，后者通过 command、UI 和快捷键等宿主 API 实现。</p>
+<h3>生命周期事件与可拦截边界</h3>
+<table>
+<thead>
+<tr><th>事件</th><th>执行时机</th><th>可影响的对象</th></tr>
+</thead>
+<tbody>
+<tr><td><code>before_agent_start</code></td><td>Agent 启动前</td><td>注入本轮消息，修改本轮 system prompt</td></tr>
+<tr><td><code>context</code></td><td>每次模型调用前</td><td>调整本轮发送给模型的 messages</td></tr>
+<tr><td><code>before_provider_request</code></td><td>Provider 请求发送前</td><td>检查或替换底层请求 payload</td></tr>
+<tr><td><code>tool_call</code></td><td>工具开始执行前</td><td>修改参数、阻止执行或终止任务</td></tr>
+<tr><td><code>tool_result</code></td><td>工具执行完成后</td><td>修改结果内容、details、错误状态和 usage</td></tr>
+<tr><td><code>turn_end</code></td><td>一轮 Agent 执行结束后</td><td>记录指标、触发后处理或更新扩展状态</td></tr>
+<tr><td><code>session_start</code></td><td>会话启动时</td><td>读取 session branch，恢复扩展状态</td></tr>
+</tbody>
+</table>
+<p>Pi 的扩展面横跨三个边界：Agent 行为、Provider 请求和宿主产品能力。尤其是 <code>before_provider_request</code>，它允许扩展在模型请求即将发出时直接观察或替换 payload；<code>tool_call</code> 则位于工具执行前，可以实现权限确认、路径保护和确定性拦截。</p>
+<h3>Prompt、Session 与 Extension State</h3>
+<div class="grid-2">
+<div class="mini-card">
+<h3>Prompt 构造</h3>
+<p><code>selectedTools</code>、<code>toolSnippets</code>、<code>promptGuidelines</code>、工作目录、项目 context files 和 skills 共同影响 system prompt。<code>before_agent_start</code> 与 <code>context</code> 还可以继续调整本轮上下文。</p>
+</div>
+<div class="mini-card">
+<h3>状态持久化</h3>
+<p>扩展短期状态可以保存在进程内；需要跨会话或分支恢复的状态，应写入 session entry 或工具结果的 <code>details</code>，并在会话启动时根据 branch 重建。</p>
+</div>
+</div>
+<p>Pi 将 session 作为扩展可以参与的事实来源。扩展可以追加事件，也可以根据当前分支重新计算自己的状态。这种方式给了插件作者很大的自由度，同时要求每个扩展自行设计状态一致性和恢复策略。</p>
+<h3>设计哲学：把宿主做成可编程平台</h3>
+<p>Pi 的核心运行时保持小而清晰，变化通过 Extension API 向外展开。扩展可以按照任务需要重新组合工具、prompt、权限、命令、界面和会话逻辑，Agent 的能力边界也随之成为一个可编程对象。</p>
+<div class="quote">Pi 把 Agent 的生命周期、工具系统、Provider 请求和交互界面暴露给扩展，让 coding agent 从一个固定产品变成一组可以重新编排的宿主能力。</div>
+<h3>Middleware 与 Extension 的技术边界</h3>
+<table>
+<thead>
+<tr><th>维度</th><th>Deep Agents middleware</th><th>Pi extension</th></tr>
+</thead>
+<tbody>
+<tr><td>基本单位</td><td>Agent Loop 中的 middleware 或 wrapper</td><td>宿主进程中的 TypeScript 模块</td></tr>
+<tr><td>注册时机</td><td>创建 Agent 时组装 middleware stack</td><td>宿主加载模块时向 Extension API 注册</td></tr>
+<tr><td>主要控制面</td><td>prompt、tools、state、tool execution</td><td>lifecycle、provider、tools、session、UI、commands</td></tr>
+<tr><td>状态归属</td><td>LangGraph state、checkpoint 和 interrupt</td><td>扩展自行管理内存状态与 session persistence</td></tr>
+<tr><td>组合方式</td><td>有序 middleware stack，可替换或追加能力</td><td>事件监听器按扩展加载顺序执行</td></tr>
+<tr><td>设计重点</td><td>可组合的 Agent Runtime</td><td>可编程的 Agent Host</td></tr>
+</tbody>
+</table>
+<p>两种机制都提供了 ReAct 循环之外的控制面，控制面的边界各有侧重：Deep Agents 重点管理 Agent 如何运行，Pi 进一步开放 Agent 产品如何被改造。这个差异也为后文理解 DeepSeek Harness 的插件化设计提供了参照。</p>
+<p class="source-note">参考：<a href="https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/system-prompt.ts">Pi system prompt</a>、<a href="https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md">Pi extensions</a>、<a href="https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/README.md">Pi coding agent</a>。</p>
+</section>
+<section id="explicit-workflow" class="card">
+<h2>五、OpenCode：显式工具面与权限语法</h2>
+<p>OpenCode 把 provider、agent、工具、权限、skills、MCP 和插件放在一套可配置的 runtime 里。它的特点集中在“每个控制面都拥有显式配置”：模型可以更换，agent 可以切换，工具可以细分，权限可以落到命令和路径，扩展可以通过插件进入生命周期。</p>
+<h3>从 Session Prompt 到工具结算</h3>
+<p>从源码路径看，OpenCode 的 <code>session/prompt</code> 是一次 Agent turn 的重要汇合点：它读取 session，组装当前 agent、system prompt、instructions、skills、工具 registry 和 MCP 工具，向 provider 发起请求；工具执行前后再经过插件 hook，结果写回 session，必要时进入 compaction。</p>
+<div class="map-line harness-flow" aria-label="OpenCode 一次 Agent turn 的运行路径">
+<span class="node"><span class="flow-title">Session prompt</span><span class="flow-detail">agent · system · instructions</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">Tool registry</span><span class="flow-detail">built-in · custom · MCP</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">Permission</span><span class="flow-detail">tool · command · path</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">Execute + hooks</span><span class="flow-detail">before · execute · after</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">Session / compaction</span><span class="flow-detail">persist · summarize · retry</span></span>
+</div>
+<p>这条路径说明 OpenCode 的 Agent Loop 由多个可替换服务共同完成。工具注册决定模型能看到什么，permission 决定动作是否可以继续，tool settlement 负责真正执行，session 负责让结果进入下一轮和后续恢复。</p>
+<h3>核心工具面：从代码操作延伸到上下文操作</h3>
+<table>
+<thead>
+<tr><th>能力区</th><th>代表工具</th><th>运行时职责</th></tr>
+</thead>
+<tbody>
+<tr><td>文件与命令</td><td><code>read</code>、<code>edit</code>、<code>write</code>、<code>apply_patch</code>、<code>bash</code></td><td>读取、修改和执行项目中的实际工作</td></tr>
+<tr><td>代码理解</td><td><code>grep</code>、<code>glob</code>、<code>lsp</code></td><td>建立搜索、文件发现和语言服务能力</td></tr>
+<tr><td>任务与指导</td><td><code>todowrite</code>、<code>todoread</code>、<code>skill</code></td><td>维护显式任务状态，并按需加载工作方法</td></tr>
+<tr><td>外部信息</td><td><code>webfetch</code>、<code>websearch</code>、MCP tools</td><td>把网络和外部服务接入同一工具权限体系</td></tr>
+<tr><td>交互</td><td><code>question</code></td><td>把需要用户决策的分支纳入 Agent Loop</td></tr>
+</tbody>
+</table>
+<p>OpenCode 文档把内置工具、custom tools 和 MCP servers 放在同一张工具地图上。这样做的效果是：模型看到的能力来自统一 registry，权限规则也可以用同一套模式匹配处理内置工具、自定义工具和 MCP 工具。</p>
+<h3>Permission：把治理细化到工具输入</h3>
+<div class="grid-2">
+<div class="mini-card">
+<h3>三种决策</h3>
+<p><code>allow</code> 直接执行，<code>ask</code> 请求用户批准，<code>deny</code> 阻止动作。默认工具可以运行，项目配置再针对敏感能力增加约束。</p>
+</div>
+<div class="mini-card">
+<h3>细粒度匹配</h3>
+<p>规则可以匹配工具名、bash 命令、文件路径和外部目录。最后匹配的规则生效，agent 还可以覆盖全局 permission。</p>
+</div>
+</div>
+<p>例如，<code>bash</code> 可以把所有命令设为 <code>ask</code>，再把 <code>git status</code> 设为 <code>allow</code>，把 <code>git push</code> 设为 <code>deny</code>；<code>edit</code> 也可以只开放某个目录。<code>--auto</code> 只改变原本需要询问的动作，显式的 <code>deny</code> 仍然生效。</p>
+<p>这种 permission 设计把“模型能不能调用工具”和“这次具体输入能不能执行”放进同一个 policy 层。权限规则因而拥有了比 system prompt 更稳定的约束力。</p>
+<h3>Agent、Skill 与 Plugin：三个不同的扩展粒度</h3>
+<p>OpenCode 的 agent 配置可以指定 model、prompt、permission 和 tools，并通过 <code>mode</code> 区分 <code>primary</code>、<code>subagent</code> 和 <code>all</code>。<code>Task</code> 工具负责调用子 Agent，<code>permission.task</code> 可以进一步限制某个 Agent 可以调用哪些子 Agent。</p>
+<p>Skills 采用 progressive disclosure：模型先在 <code>skill</code> 工具描述中看到可用 skill 的名称与简介，选择之后再加载具体内容；skill 自身也受 pattern-based permission 控制，<code>deny</code> 的 skill 会从可见列表中消失。</p>
+<p>Plugin 则位于 runtime hook 层。它是一个 JavaScript/TypeScript 模块，可以从 npm 或全局/项目插件目录加载，插件函数接收项目、worktree、目录、SDK client 和 shell API，并返回 hooks 或 custom tools：</p>
+<pre><code>export const BashGuard = async () =&gt; ({
+  "tool.execute.before": async (input, output) =&gt; {
+    if (input.tool === "bash") {
+      // 可以检查或修改即将执行的参数
+      output.args.command = output.args.command.trim();
+    }
+  },
+});</code></pre>
+<p>插件按全局配置、项目配置、全局目录、项目目录的顺序加载，hook 按加载顺序执行。除了工具执行 hook，插件还可以参与文件、消息、命令、session compaction 和日志等事件。</p>
+<h3>Session 与 Compaction：保留事实，重建上下文</h3>
+<p>OpenCode 的 session 持久化完整对话和工具结果，compaction 为模型上下文生成结构化 checkpoint，并保留近期上下文尾部。每次 provider 调用前，runtime 会估算 system prompt、messages 和工具说明的整体大小；超过模型上下文预算后，先完成 compaction，再用新的 checkpoint 重建请求。</p>
+<p>这套机制把“历史事实”和“当前模型视图”分开：session 负责保留可恢复的记录，compaction 负责生成有限长度的工作上下文，plugin 还可以通过 <code>experimental.session.compacting</code> 注入必须跨压缩保留的信息或替换压缩 prompt。</p>
+<div class="quote">OpenCode 的设计重点是把 Agent Runtime 写成一套显式控制面：工具、agent、permission、skill、plugin 和 session 各自拥有可读配置，同时通过统一的 prompt 和 tool dispatch 路径协作。</div>
+<p>它体现的设计哲学是“provider-neutral + 显式治理 + 可组合服务”。用户可以阅读和修改大部分 runtime 行为，模型选择、工具可见性、执行权限、子 Agent 和上下文压缩也因此成为同一套配置语言中的不同对象。</p>
+<p class="source-note">参考：<a href="https://opencode.ai/docs/tools/">Tools</a>、<a href="https://opencode.ai/docs/permissions/">Permissions</a>、<a href="https://opencode.ai/docs/agents/">Agents</a>、<a href="https://opencode.ai/docs/skills/">Skills</a>、<a href="https://opencode.ai/docs/plugins/">Plugins</a>、<a href="https://opencode.ai/v2/docs/compaction">Compaction</a>、<a href="https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/prompt.ts">Session prompt source</a>。</p>
+</section>
+<section id="cline-workflow" class="card">
+<h2>六、Cline：Plan/Act、Stateful Core 与插件 Hook</h2>
+<p>Cline 的技术形态适合从 SDK 架构展开。它把无状态的 Agent Loop 放在 <code>@cline/agents</code>，把模型适配放在 <code>@cline/llms</code>，把 session、持久化、配置发现、RPC 和运行时宿主放在 <code>@cline/core</code>，再由 CLI、VS Code、JetBrains、Kanban 或自定义应用提供具体 host。</p>
+<h3>从 Host 到 Agent Loop</h3>
+<div class="map-line harness-flow" aria-label="Cline SDK 运行时分层">
+<span class="node"><span class="flow-title">Host</span><span class="flow-detail">CLI · IDE · SDK app</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">RuntimeHost</span><span class="flow-detail">local · hub · remote</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">ClineCore</span><span class="flow-detail">session · config · persistence</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">Agent</span><span class="flow-detail">loop · tools · streaming</span></span>
+<span class="arrow">-&gt;</span>
+<span class="node"><span class="flow-title">LLM handlers</span><span class="flow-detail">provider request / response</span></span>
+</div>
+<p>官方 SDK 架构把这条链路拆得很清楚：host 构造 <code>RuntimeHost</code>，core 准备运行时并创建 Agent，<code>@cline/agents</code> 驱动循环，<code>@cline/llms</code> 处理模型，core 最后保存 state、artifacts 和 metadata。Hub runtime 还可以让多个客户端连接同一个 session，继续接收结构化事件流。</p>
+<h3>核心工具面：代码操作、外部环境与交互</h3>
+<table>
+<thead>
+<tr><th>能力区</th><th>代表工具</th><th>运行时意义</th></tr>
+</thead>
+<tbody>
+<tr><td>文件操作</td><td><code>write_to_file</code>、<code>read_file</code>、<code>replace_in_file</code></td><td>创建、读取和局部修改项目文件</td></tr>
+<tr><td>代码理解</td><td><code>search_files</code>、<code>list_files</code>、<code>list_code_definition_names</code></td><td>搜索文件、定位目录和提取代码结构</td></tr>
+<tr><td>执行与浏览</td><td><code>execute_command</code>、<code>browser_action</code></td><td>运行 shell 命令和操作浏览器环境</td></tr>
+<tr><td>外部工具</td><td><code>use_mcp_tool</code></td><td>通过 MCP 连接数据库、API 和其它服务</td></tr>
+<tr><td>交互控制</td><td><code>ask_followup_question</code>、<code>attempt_completion</code>、<code>new_task</code></td><td>提问、声明完成、切换任务上下文</td></tr>
+</tbody>
+</table>
+<p>Cline 的工具面同时覆盖环境操作和交互控制。用户可以把它当作代码编辑器里的执行 Agent，也可以把 MCP、浏览器、提问和新任务视为工作流的一部分。SDK 层还提供归一化的 <code>bash</code>、<code>editor</code>、<code>read_files</code>、<code>apply_patch</code>、<code>search</code> 和 <code>fetch_web</code> 等工具接口。</p>
+<h3>Plan/Act：把模型决策放进可审阅的状态机</h3>
+<div class="grid-2">
+<div class="mini-card">
+<h3>Plan mode</h3>
+<p>可以读取代码、搜索和讨论方案，运行时禁止修改文件和执行命令。它把探索、架构决策、边界讨论和计划形成集中在一个低副作用阶段。</p>
+</div>
+<div class="mini-card">
+<h3>Act mode</h3>
+<p>沿用 Plan 阶段的完整上下文，获得文件修改和命令执行能力。不同模式可以选择不同模型，用户也可以在复杂任务中多次往返。</p>
+</div>
+</div>
+<p>Plan/Act 的价值体现在权限和上下文的同时切换：Plan 阶段降低工具权限，Act 阶段恢复执行能力；两阶段共享对话历史，计划因此成为后续执行的正式输入。Cline 还提供 checkpoints，让文件变更可以回滚和比较。</p>
+<h3>Plugin 与 Hook：能力注册和生命周期拦截</h3>
+<p>Cline plugin 是 TypeScript 模块，可以是单文件，也可以是带依赖和资源的 package。加载过程包含 resolve、validate、setup、activate 四个阶段：先收集插件，再校验 manifest 与 capabilities，随后注册工具、命令、rules、providers 和 hooks；session 启动后，注册表被冻结。</p>
+<pre><code>const plugin: AgentPlugin = {
+  name: "guard",
+  manifest: { capabilities: ["hooks"] },
+  hooks: {
+    beforeTool({ toolCall }) {
+      if (toolCall.toolName === "run_commands") {
+        return { stop: true, reason: "需要人工确认" };
+      }
+    },
+    afterRun({ result }) {
+      if (result.status === "completed") {
+        // 记录成功完成事件
+      }
+    },
+  },
+};</code></pre>
+<table>
+<thead>
+<tr><th>Hook</th><th>位置</th><th>典型用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>beforeRun</code> / <code>afterRun</code></td><td>一次 user turn 前后</td><td>初始化、指标、完成通知</td></tr>
+<tr><td><code>beforeModel</code> / <code>afterModel</code></td><td>模型请求前后</td><td>注入上下文、修改 request、检查模型输出</td></tr>
+<tr><td><code>beforeTool</code> / <code>afterTool</code></td><td>工具执行前后</td><td>审计、脱敏、阻止危险调用、替换结果</td></tr>
+<tr><td><code>onEvent</code></td><td>runtime event 流</td><td>驱动 UI、遥测和外部事件管道</td></tr>
+</tbody>
+</table>
+<p>Cline 同时保留 file hooks 和 typed runtime hooks：前者适合工作区脚本，后者适合可复用插件。插件还可以通过 message builder 做上下文重写，通过 rule 注入 prompt 规则，通过 provider 和 automation event 扩展宿主能力。</p>
+<h3>Session、Compaction 与完成判定</h3>
+<p>Cline Core 负责 session persistence、SQLite 存储、配置发现和多进程运行。完整 transcript 作为 canonical history 保留，compaction state 作为单独 artifact 保存；恢复时先校验 compaction 覆盖的历史前缀，再把边界之后的新消息投影回工作上下文。</p>
+<p>文件变更还可以通过 Git-based checkpoint 追踪和回滚。一次 Agent turn 的完成也拥有确定性信号：当前 SDK 观察成功的 <code>submit_and_exit</code> tool call，并据此发出 <code>task.completed</code>；旧 Cline 产品中的 <code>attempt_completion</code> 是对应的交互语义。</p>
+<div class="quote">Cline 把 coding agent 拆成无状态 Agent Loop、状态化 Core 和可替换 Host，再用 Plan/Act、checkpoint、plugin hook 和 session persistence 把人机协作编排成完整工作流。</div>
+<p>它体现的设计哲学是“分层运行时 + 显式协作状态”。Agent 负责模型与工具循环，Core 负责事实状态和恢复，Host 负责交互与部署形态，Plugin 和 Hook 负责可复用扩展。</p>
+<p class="source-note">参考：<a href="https://docs.cline.bot/tools-reference/all-cline-tools">All Cline Tools</a>、<a href="https://github.com/cline/cline/blob/main/sdk/README.md">Cline SDK</a>、<a href="https://github.com/cline/cline/blob/main/sdk/ARCHITECTURE.md">SDK Architecture</a>、<a href="https://github.com/cline/cline/blob/main/sdk/.cline/skills/plugin.md">Plugin guide</a>、<a href="https://github.com/cline/cline/blob/main/docs/core-workflows/plan-and-act.mdx">Plan &amp; Act</a>、<a href="https://github.com/cline/cline/blob/main/.clinerules/cline-overview.md">Cline overview</a>。</p>
+</section>
+<section id="mature-harness" class="card">
+<h2>七、Claude Code、Codex 与 Grok Build</h2>
+<p>这三个 coding harness 都把文件、命令、项目上下文和权限边界做成了相对完整的产品能力，但各自强调的控制面不同。</p>
+<div class="grid">
+<div class="card">
+<h3>Claude Code：模型驱动扩展与确定性护栏</h3>
+<p><strong>工具面：</strong>Read、Write、Edit、Bash、Glob、Grep、web search、MCP，以及 subagent 和交互工具。</p>
+<p><strong>上下文：</strong><code>CLAUDE.md</code> 作为持久项目上下文，skills 按需加载，auto memory 提供机器级记忆，MCP 连接外部服务。</p>
+<p><strong>独有特性：</strong>hooks 负责生命周期自动化，权限系统可以在工具执行前进行 allow、ask、deny 决策。</p>
+<p><strong>设计取向：</strong>模型负责组合能力，hooks 和 permissions 负责确定性规则。</p>
+<p class="source-note"><a href="https://code.claude.com/docs/en/how-claude-code-works">工作方式</a> · <a href="https://code.claude.com/docs/en/features-overview">扩展面</a> · <a href="https://code.claude.com/docs/en/permissions">权限</a></p>
+</div>
+<div class="card">
+<h3>Codex：沙箱、审批与仓库级上下文</h3>
+<p><strong>工具面：</strong>shell/patch/file changes、web search、MCP、skills 和 hooks。</p>
+<p><strong>上下文：</strong>通过层级化的 <code>AGENTS.md</code> 注入仓库、目录和全局工作约束，越靠近当前目录的 instruction 拥有更高局部性。</p>
+<p><strong>独有特性：</strong>sandbox 负责技术边界，approval policy 负责确认时机，两者形成分层治理。</p>
+<p><strong>设计取向：</strong>把“在哪里能写、能否联网、何时需要询问”落实为 runtime policy。</p>
+<p class="source-note"><a href="https://github.com/openai/codex">Codex CLI</a> · <a href="https://learn.chatgpt.com/docs/agent-configuration/agents-md">AGENTS.md</a> · <a href="https://learn.chatgpt.com/docs/sandboxing">Sandboxing</a></p>
+</div>
+<div class="card">
+<h3>Grok Build：开源 Runtime 与协议互操作</h3>
+<p><strong>工具面：</strong>读取、编辑、搜索代码，shell、web、长任务，以及计划和并行 subagents。</p>
+<p><strong>扩展面：</strong>官方介绍公开了 agent loop、context assembly、tool dispatch、skills、plugins、hooks、MCP、subagents 和 ACP。</p>
+<p><strong>独有特性：</strong>Plan mode 支持用户审阅、修改和批准计划，runtime 以 Rust 实现并支持 local-first 配置。</p>
+<p><strong>设计取向：</strong>公开 runtime 结构，连接计划审阅、扩展系统和 Agent 间协议。</p>
+<p class="source-note"><a href="https://x.ai/news/grok-build-open-source">xAI 开源介绍</a> · <a href="https://github.com/xai-org/grok-build">Grok Build repository</a> · <a href="https://x.ai/news/grok-build-cli">CLI 发布介绍</a></p>
+</div>
+</div>
+<p>这三者共同说明：coding harness 的产品差异逐渐集中在上下文装配、权限策略、生命周期 hook、会话恢复和验证工作流。单看模型调用接口，很难解释用户体验与安全边界的差异。</p>
+</section>
+<section id="deepseek-harness" class="card">
+<h2>八、DeepSeek Harness：Everything is a Plugin</h2>
+<p>DeepSeek Harness（CLI 名称为 <code>dsh</code>）是官方开源的 Agent Harness，目前处于 developer preview。官方架构建立在 Cordis 之上，核心口号是 “Everything is a Plugin”。</p>
+<h3>插件树：运行时能力的组合方式</h3>
+<p>DSH 把模型适配器、工具注册表、session log、system prompt、agent loop、filesystem、shell、skills、subagents、jobs、workflow、sandbox、approval、persistence、telemetry、web/ACP/SDK 都放进 Cordis plugin tree。插件通过 service definition、provider、consumer 形成能力 seam，配置层可以在启动时替换、插入或卸载具体实现。</p>
+<p>官方架构文档列出的 core packages 也呈现了这种边界：</p>
+<table>
+<thead>
+<tr>
+<th>Package</th>
+<th>运行时职责</th>
+<th>对 Agent 行为的影响</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>core/session</code></td>
+<td>维护 append-only <code>SessionEvent</code> log</td>
+<td>决定历史、恢复、fork、replay 和持久化的事实来源</td>
+</tr>
+<tr>
+<td><code>core/system-prompt</code></td>
+<td>组装 prompt sections 与 tool schemas</td>
+<td>决定每个 step 的模型可见上下文</td>
+</tr>
+<tr>
+<td><code>core/tools</code></td>
+<td>维护 scoped tool registry 与 guarded execution</td>
+<td>决定工具发现、权限和执行阶段</td>
+</tr>
+<tr>
+<td><code>core/agent-loop</code></td>
+<td>提供默认 driver</td>
+<td>推进 turn、step、模型请求和工具工作</td>
+</tr>
+<tr>
+<td><code>llm/llm</code></td>
+<td>提供消息、流和模型适配 seam</td>
+<td>支持模型 provider 的替换</td>
+</tr>
+</tbody>
+</table>
+<h3>Turn / Step：两层 Agent Loop</h3>
+<p>DSH 将一次工作拆成两个层次：</p>
+<ul>
+<li><strong>Step：</strong>一次模型请求，以及这次请求触发的工具执行。</li>
+<li><strong>Turn：</strong>从输入被接收开始，到没有待处理输入或工具工作时结束的任务区间。</li>
+</ul>
+<p>典型路径可以写成：</p>
+<div class="formula formula-block">input inbox
+  → claim next-step input
+  → agent/pre-step
+  → step/start
+  → 从 session log 派生 model history
+  → 组装 system prompt 与 tool schema
+  → agent/request → llm/stream
+  → assistant chunks / message
+  → tool/call
+  → policy / approval / sandbox / execute
+  → tool/result
+  → step/end
+  → 下一 step 或 turn/end</div>
+<h3>Session Event Log：模型可见内容的事实来源</h3>
+<p>DSH 的 session 采用 append-only typed event model。LLM history 从 log 派生，assistant chunks、tool call/result、request header 等事件共同构成可回放状态。官方架构特别强调：模型可见的输入需要能够从 log 重建，渲染后的 system prompt 和工具 schema 也记录在 request header 中。</p>
+<p>这一设计让 fork、resume、replay、UI trajectory、telemetry 和 persistence 使用同一份状态来源。状态的可追溯性因此成为 runtime contract。</p>
+<h3>System Prompt：可排序、可 Shadow、可 Complete</h3>
+<p><code>system-prompt</code> 是独立 package。插件可以按名称和顺序注册 <code>PromptSection</code>、动态 prompt context、工具 schema provider 和变量；scoped section 可以 shadow 全局 section。<code>standard</code> preset 会组装 persona、agent instructions、bash、filesystem、skills、goal、plan、compaction、delegation/workflow 等能力。</p>
+<p><code>minimal</code> preset 使用 <code>complete: true</code> 的固定 persona，只保留有限工具，体现了 DSH 的两种 prompt 形态：一套可由插件逐段组合的 prompt，以及一套由 preset 完整接管的 prompt。</p>
+<h3>工具、记忆与安全边界</h3>
+<ul>
+<li><strong>工具：</strong>ToolDefinition 同时描述参数 schema、输出、执行函数、调度元数据和展示信息；registry 支持 scope、shadowing、allow/deny 和 deny-only guard。</li>
+<li><strong>执行：</strong>工具经过 pre-execute、policy/guard、approval、sandbox、execute、post-execute 等阶段，并把调用与结果写入事件流。</li>
+<li><strong>记忆：</strong>session persistence 属于核心状态；长期语义记忆通过 default-off 的 MCP memory overlay 接入，部署者可以选择后端和数据治理边界。</li>
+<li><strong>安全：</strong>approval、sandbox、工具 policy、审计事件和 runtime invariants 形成多层约束。</li>
+</ul>
+<div class="quote">DSH 的设计哲学可以概括为：插件化能力、事件溯源状态、可撤销生命周期、分层安全边界与真实运行路径验证。</div>
+<p>与 Deep Agents 对照来看，Deep Agents 以 middleware 组装一套 opinionated harness；DSH 把 service、lifecycle 和事实来源也纳入统一的插件组合。前者适合表达“如何把 Agent 能力装配起来”，后者适合观察“一个 Agent Runtime 如何把自身拆成可替换部件”。</p>
+<p class="source-note">参考：<a href="https://deepseek.com/harness/">DeepSeek Harness 官方页面</a>、<a href="https://github.com/deepseek-ai/deepseek-harness">官方仓库</a>、<a href="https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md">架构文档</a>、<a href="https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/agent-lifecycle.md">Agent lifecycle</a>、<a href="https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session.md">Session subsystem</a>、<a href="https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/system-prompt.md">System prompt subsystem</a>、<a href="https://github.com/cordiverse/cordis">Cordis</a>。</p>
+</section>
+<section id="observability-plane" class="card">
+<h2>九、Langfuse 与 Vercel：跨越 Runtime 的两层视角</h2>
+<h3>Langfuse：观测、评估与 Prompt 反馈</h3>
+<p>Langfuse 的核心工具面集中在 trace、observation、prompt、dataset、evaluation 和 agent-facing access。它通过 Agent Skill、CLI 和 MCP，让 coding agent 查询 traces、管理 prompts、创建 evaluations，并把运行反馈带回开发流程。</p>
+<p>从 harness 视角看，Langfuse承担的是 observability/evaluation plane：它记录 Agent 做了什么、工具如何执行、哪里产生失败、哪个 prompt/tool/version 影响了结果，并支持后续评估和迭代。</p>
+<p class="source-note">参考：<a href="https://langfuse.com/agents/agents">Langfuse Agents</a>、<a href="https://langfuse.com/docs/observability/features/observation-types">Observation types</a>、<a href="https://langfuse.com/docs/prompt-management/features/agentic-access">Agentic access</a>。</p>
+<h3>Vercel AI SDK：统一接入层如何保留差异</h3>
+<p>Vercel AI SDK 的 Harness 抽象提供了一个观察不同 runtime 的统一入口：<code>HarnessAgent</code>、adapter、sandbox provider 和 session。当前 adapter 列表包括 Claude Code、Cline、Codex、Deep Agents、Grok Build、OpenCode 和 Pi。</p>
+<p>官方文档将工具面分成三类：</p>
+<table>
+<thead>
+<tr>
+<th>工具面</th>
+<th>执行者</th>
+<th>设计含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Runtime built-in tools</td>
+<td>底层 harness</td>
+<td>工具与原生权限、session、sandbox 和事件流绑定</td>
+</tr>
+<tr>
+<td>Host-executed AI SDK tools</td>
+<td>宿主应用</td>
+<td>应用可以把自有业务能力注入 Agent，同时保留宿主执行边界</td>
+</tr>
+<tr>
+<td>External MCP tools</td>
+<td>MCP server</td>
+<td>工具通过协议连接外部服务，拥有独立生命周期与权限边界</td>
+</tr>
+</tbody>
+</table>
+<p>统一 API 保留了 runtime 差异：Claude Code 的 adapter 暴露 read/write/edit/bash/glob/grep/webSearch；Pi 暴露 read/write/edit/bash/grep/glob/ls；OpenCode 还包括 webfetch、skill、todowrite、agent；Codex 的文件变化则以动态事件体现。这个差异本身就是 harness 设计的一部分。</p>
+<p class="source-note">参考：<a href="https://ai-sdk.dev/docs/ai-sdk-core/harness">HarnessAgent</a>、<a href="https://ai-sdk.dev/docs/ai-sdk-core/harness/tools">Tools</a>、<a href="https://ai-sdk.dev/docs/ai-sdk-core/harness/skills">Skills</a>、<a href="https://ai-sdk.dev/providers/ai-sdk-harnesses">Harness adapters</a>。</p>
+</section>
+<section id="synthesis" class="card">
+<h2>十、把 Harness 读成一组设计选择</h2>
+<p>不同项目采用了不同的组合方式，但可以从内置能力反推出它们的设计取向。</p>
+<table>
+<thead>
+<tr>
+<th>观察到的能力</th>
+<th>体现的设计选择</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>write_todos</code>、<code>todowrite</code>、Plan mode</td>
+<td>任务分解和任务状态拥有显式载体，模型的短期记忆获得外部支撑</td>
+</tr>
+<tr>
+<td>文件系统、context offload、compaction</td>
+<td>上下文被当作有限资源，结果可以外部化、压缩和按需取回</td>
+</tr>
+<tr>
+<td><code>task</code>、subagent、ACP</td>
+<td>上下文隔离、并行执行与 Agent 间委派成为 runtime 能力</td>
+</tr>
+<tr>
+<td><code>SKILL.md</code>、<code>skill()</code>、plugin</td>
+<td>能力通过发现、按需加载和生命周期管理进入运行时</td>
+</tr>
+<tr>
+<td>middleware、hook、permission、sandbox</td>
+<td>扩展逻辑与确定性治理分别拥有自己的接入点</td>
+</tr>
+<tr>
+<td>session log、event store、replay</td>
+<td>状态拥有可恢复、可审计、可回放的事实来源</td>
+</tr>
+<tr>
+<td>trace、evaluation、verification</td>
+<td>“完成”拥有可观察和可检查的判定依据</td>
+</tr>
+</tbody>
+</table>
+<p>如果把这些能力再抽象一层，Harness 的核心设计问题可以收敛成三问：</p>
+<ol>
+<li>哪些能力应该成为可替换组件？</li>
+<li>哪些状态应该成为持久、可回放的事实来源？</li>
+<li>哪些边界应该由 runtime 强制执行，哪些边界交给模型理解？</li>
+</ol>
+<p>Deep Agents、Pi、OpenCode、Cline、Claude Code、Codex、Grok Build 和 DeepSeek Harness 的差异，正是它们对这三问给出的不同答案。Harness 的价值也由此显现：它让 Agent 的能力、状态和约束获得了可设计、可替换、可验证的工程边界。</p>
+</section>
+<section id="sources" class="card">
+<h2>参考资料</h2>
+<ol class="source-list">
+<li><a href="https://arxiv.org/abs/2210.03629">ReAct: Synergizing Reasoning and Acting in Language Models</a></li>
+<li><a href="https://arxiv.org/abs/2605.13357">AI Harness Engineering: A Runtime Substrate for Foundation-Model Software Agents</a></li>
+<li><a href="https://ai-sdk.dev/providers/ai-sdk-harnesses">Vercel AI SDK Harness adapters</a></li>
+<li><a href="https://github.com/langchain-ai/deepagents">LangChain Deep Agents</a></li>
+<li><a href="https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent">Pi coding agent</a></li>
+<li><a href="https://opencode.ai/docs/tools/">OpenCode tools</a></li>
+<li><a href="https://opencode.ai/docs/permissions/">OpenCode permissions</a></li>
+<li><a href="https://opencode.ai/docs/plugins/">OpenCode plugins</a></li>
+<li><a href="https://github.com/cline/cline">Cline</a></li>
+<li><a href="https://docs.cline.bot/tools-reference/all-cline-tools">Cline tools reference</a></li>
+<li><a href="https://github.com/cline/cline/blob/main/sdk/ARCHITECTURE.md">Cline SDK architecture</a></li>
+<li><a href="https://code.claude.com/docs/en/how-claude-code-works">How Claude Code works</a></li>
+<li><a href="https://github.com/openai/codex">OpenAI Codex</a></li>
+<li><a href="https://github.com/xai-org/grok-build">xAI Grok Build</a></li>
+<li><a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a></li>
+<li><a href="https://langfuse.com/agents/agents">Langfuse Agents</a></li>
+</ol>
+</section>
+</main></body></html>
